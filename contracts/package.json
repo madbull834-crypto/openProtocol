@@ -1,0 +1,21 @@
+{
+  "name": "@open-protocol/contracts",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "hardhat compile",
+    "test": "hardhat test",
+    "coverage": "hardhat coverage",
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network bscTestnet"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "@openzeppelin/contracts": "^5.4.0",
+    "dotenv": "^17.2.3",
+    "hardhat": "^2.27.0",
+    "solc": "0.8.28",
+    "solidity-coverage": "^0.8.16",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

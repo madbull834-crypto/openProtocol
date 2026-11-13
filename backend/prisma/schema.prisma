@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Participant {
+  address     String   @id @db.VarChar(42)
+  sponsor     String?  @db.VarChar(42)
+  memberId    BigInt   @unique
+  directCount Int      @default(0)
+  joinedAt    DateTime
+  blockNumber BigInt
+  txHash      String   @db.VarChar(66)
+  logIndex    Int
+  createdAt   DateTime @default(now())
+
+  @@unique([txHash, logIndex])
+  @@index([sponsor])
+}
+
+model Allocation {
+  id               BigInt   @id @default(autoincrement())
+  account          String   @db.VarChar(42)
+  workingAmount    Decimal  @db.Decimal(78, 0)
+  nonWorkingAmount Decimal  @db.Decimal(78, 0)
+  clubAmount       Decimal  @db.Decimal(78, 0)
+  blockNumber      BigInt
+  txHash           String   @db.VarChar(66)
+  logIndex         Int
+  createdAt        DateTime @default(now())
+
+  @@unique([txHash, logIndex])
+  @@index([account])
+}
+
+model BlockCheckpoint {
+  blockNumber BigInt @id
+  blockHash   String @db.VarChar(66)
+  createdAt   DateTime @default(now())
+}
