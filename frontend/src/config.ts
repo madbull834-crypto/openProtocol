@@ -10,6 +10,11 @@ export const deploymentError = configuredAddress && !isAddress(configuredAddress
   ? "VITE_PROTOCOL_ADDRESS is not a valid EVM contract address."
   : undefined;
 export const protocolAddress = (configuredAddress && isAddress(configuredAddress) ? getAddress(configuredAddress) : undefined) as Address | undefined;
+const defaultTestToken = chainId === 97 ? "0x59ab714Eb2ff96869504302e38d5E8459009e84C" : undefined;
+const configuredTestToken = import.meta.env.VITE_TEST_TOKEN_ADDRESS?.trim() || defaultTestToken;
+export const testTokenAddress = (configuredTestToken && isAddress(configuredTestToken)
+  ? getAddress(configuredTestToken)
+  : undefined) as Address | undefined;
 export const explorerUrl = import.meta.env.VITE_EXPLORER_URL ?? selectedChain.blockExplorers.default.url;
 
 export const wagmiConfig = getDefaultConfig({

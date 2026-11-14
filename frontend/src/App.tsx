@@ -3,9 +3,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
 import { isAddress, zeroAddress, type Address } from "viem";
-import { useAccount, useChainId, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { chainId as requiredChainId, deploymentError, explorerUrl, protocolAddress } from "./config";
-import { erc20Abi, protocolAbi } from "./contracts/abi";
+import { useAccount, useBalance, useChainId, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { chainId as requiredChainId, deploymentError, explorerUrl, protocolAddress, testTokenAddress } from "./config";
+import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
 import { useMatrixTree, type MatrixNode } from "./matrix";
@@ -69,7 +69,15 @@ export default function App() {
     <main>
       <AnimatePresence mode="wait">
         {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} onParticipate={() => setView("participate")} onMechanics={() => setView("mechanics")}/>}
-        {view === "participate" && <Participate key="participate" address={address} token={token} ticket={ticket} registered={Boolean(participant && participant.id > 0n)} refresh={() => { reads.refetch(); participantRead.refetch(); }}/>}
+        {view === "participate" && <Participate
+          key="participate"
+          address={address}
+          currentChain={currentChain}
+          token={token}
+          ticket={ticket}
+          registered={Boolean(participant && participant.id > 0n)}
+          refresh={() => { reads.refetch(); participantRead.refetch(); }}
+        />}
         {view === "referrals" && <Referrals key="referrals" address={address} participant={participant}/>}
         {view === "mechanics" && <Mechanics key="mechanics"/>}
       </AnimatePresence>
@@ -161,11 +169,12 @@ function Receipt() {
   </div>;
 }
 
-function Participate({ address, token, ticket, registered, refresh }: { address?: Address; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
+function Participate({ address, currentChain, token, ticket, registered, refresh }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
   const refFromUrl = new URLSearchParams(location.search).get("ref") ?? "";
   const [sponsor, setSponsor] = useState(refFromUrl);
   const { data: allowance, refetch: refetchAllowance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, protocolAddress ?? zeroAddress], query: { enabled: Boolean(token && address && protocolAddress) } });
-  const { data: balance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address) } });
+  const { data: balance, refetch: refetchBalance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address) } });
+  const { data: gasBalance } = useBalance({ address, query: { enabled: Boolean(address) && currentChain === 97 } });
   const sponsorAddressValid = isAddress(sponsor) && sponsor.toLowerCase() !== address?.toLowerCase();
   const sponsorRead = useReadContract({
     ...(protocolAddress ? { address: protocolAddress, abi: protocolAbi } : { address: zeroAddress, abi: protocolAbi }),
@@ -173,15 +182,40 @@ function Participate({ address, token, ticket, registered, refresh }: { address?
     args: [sponsorAddressValid ? sponsor as Address : zeroAddress],
     query: { enabled: configured && sponsorAddressValid, retry: 2 },
   });
-  const approve = useWriteContract(); const register = useWriteContract();
+  const mint = useWriteContract(); const approve = useWriteContract(); const register = useWriteContract();
+  const mintReceipt = useWaitForTransactionReceipt({ hash: mint.data });
   const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data });
   const registerReceipt = useWaitForTransactionReceipt({ hash: register.data });
   const approved = ticket !== undefined && allowance !== undefined && allowance >= ticket;
+  useEffect(() => { if (mintReceipt.isSuccess) refetchBalance(); }, [mintReceipt.isSuccess, refetchBalance]);
   useEffect(() => { if (approveReceipt.isSuccess) refetchAllowance(); }, [approveReceipt.isSuccess, refetchAllowance]);
   useEffect(() => { if (registerReceipt.isSuccess) refresh(); }, [registerReceipt.isSuccess, refresh]);
   const validSponsor = sponsorAddressValid && Boolean(sponsorRead.data && sponsorRead.data.id > 0n);
   const hasBalance = ticket !== undefined && balance !== undefined && balance >= ticket;
-  const busy = approve.isPending || approveReceipt.isLoading || register.isPending || registerReceipt.isLoading;
+  const busy = mint.isPending || mintReceipt.isLoading || approve.isPending || approveReceipt.isLoading || register.isPending || registerReceipt.isLoading;
+  const showTestFaucet = requiredChainId === 97 && Boolean(testTokenAddress);
+  const testTokenMatches = Boolean(token && testTokenAddress && token.toLowerCase() === testTokenAddress.toLowerCase());
+  const testTokenCompatible = !token || testTokenMatches;
+  const needsTestBnb = gasBalance?.value === 0n;
+  const canMintTestToken = Boolean(address) && currentChain === 97 && testTokenCompatible && !needsTestBnb;
+  const mintButtonLabel = mintReceipt.isLoading
+    ? "Minting…"
+    : mintReceipt.isSuccess
+      ? "Minted 1,000 USDT"
+      : !address
+        ? "Connect wallet to mint"
+        : currentChain !== 97
+          ? "Switch to BSC Testnet"
+          : needsTestBnb
+            ? "Test BNB required for gas"
+          : !testTokenCompatible
+              ? "Test token unavailable"
+              : "Mint test USDT";
+  const mintErrorMessage = mint.error && (/insufficient funds|gas required exceeds allowance/i.test(mint.error.message)
+    ? "Your wallet needs BSC Testnet BNB to pay the mint transaction fee. Get free test BNB from the faucet below, then try again."
+    : /user rejected|user denied/i.test(mint.error.message)
+      ? "The mint transaction was cancelled in your wallet."
+      : mint.error.message.split("\n")[0]);
   const sponsorMessage = !sponsorAddressValid ? "Enter a valid address that is not your own wallet." : sponsorRead.isLoading ? "Checking this sponsor on-chain…" : validSponsor ? "Registered sponsor verified on-chain." : "This address is not a registered sponsor.";
 
   return <motion.div {...fade}>
@@ -189,6 +223,13 @@ function Participate({ address, token, ticket, registered, refresh }: { address?
     <section className="band gray">
       <div className="wrap-wide two-col">
         <div className="tile form">
+          {showTestFaucet && <div className="test-funds">
+            <div><small>BSC TESTNET FAUCET</small><b>Get test USDT first</b><span>Mint 1,000 MockUSDT directly to your connected wallet. These testing tokens have no real value.</span></div>
+            <div className="test-funds-actions">
+              <button className="pill" disabled={!canMintTestToken || busy} onClick={() => mint.writeContract({ address: testTokenAddress!, abi: mockUsdtAbi, functionName: "mint", args: [address!, 1_000_000_000n], chainId: 97 })}>{mintButtonLabel}</button>
+              <a href="https://www.bnbchain.org/en/testnet-faucet" target="_blank" rel="noreferrer">Get test BNB for gas <ExternalLink size={11}/></a>
+            </div>
+          </div>}
           <div className="form-step"><span className="step-n">1</span><div><h3>Sponsor.</h3><p>The address of an existing member. This relationship is permanent.</p></div></div>
           <label>Sponsor wallet address<input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
           <p className={`hint ${validSponsor ? "ok" : ""}`}>{validSponsor && <Check size={14}/>} {sponsorMessage}</p>
@@ -199,7 +240,8 @@ function Participate({ address, token, ticket, registered, refresh }: { address?
             {!approved && <button className="pill wide" disabled={!token || !ticket || !hasBalance || busy} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!] })}>{approveReceipt.isLoading ? "Confirming approval…" : hasBalance ? "Approve 25 USDT" : "Insufficient USDT balance"}</button>}
             <button className="pill wide" disabled={!approved || !validSponsor || busy} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address] })}>{registerReceipt.isLoading ? "Registering on-chain…" : approved ? "Confirm participation" : "Approval comes first"}</button>
           </div>}
-          {(approve.error || register.error) && <p className="error">{(approve.error ?? register.error)?.message.split("\n")[0]}</p>}
+          {(mint.error || approve.error || register.error) && <p className="error">{mintErrorMessage ?? (approve.error ?? register.error)?.message.split("\n")[0]}</p>}
+          {mintReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${mintReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the mint transaction <ExternalLink size={14}/></a>}
           {registerReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the confirmed transaction <ExternalLink size={14}/></a>}
         </div>
         <div className="side">

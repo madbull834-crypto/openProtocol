@@ -46,6 +46,8 @@ npm run dev -w frontend
 
 Set `VITE_PROTOCOL_ADDRESS`, `VITE_RPC_URL`, and `VITE_WALLETCONNECT_PROJECT_ID`. The frontend reads the USDT token address directly from the deployed protocol contract, avoiding a second address that could drift out of sync. Without a valid protocol address, the UI deliberately shows a setup state instead of mock production metrics.
 
+On BSC testnet, set `VITE_TEST_TOKEN_ADDRESS` to the deployed `MockUSDT` address to show a test-only faucet on the participation page. It mints 1,000 valueless MockUSDT to the connected wallet and is never shown on mainnet or for a different payment token.
+
 ## Contract deployment
 
 For testnet-only validation, deploy the included 6-decimal mock USDT first:
