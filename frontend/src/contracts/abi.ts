@@ -11,9 +11,12 @@ export const protocolAbi = [
   { type: "function", name: "settlePoolRewards", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "withdrawable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "matrixParent", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "address" }] },
+  { type: "function", name: "getMatrixChildren", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "address[2]" }] },
   { type: "function", name: "teamCount", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "workingLevel", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint8" }] },
   { type: "function", name: "nonWorkingLevel", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "workingLevelQuote", stateMutability: "view", inputs: [{ name: "level", type: "uint8" }], outputs: [{ name: "team", type: "uint256" }, { name: "idAmount", type: "uint256" }, { name: "turnover", type: "uint256" }, { name: "autoUpgrade", type: "uint256" }, { name: "distributable", type: "uint256" }] },
+  { type: "function", name: "singleLegQuote", stateMutability: "view", inputs: [{ name: "level", type: "uint8" }], outputs: [{ name: "members", type: "uint64" }, { name: "directs", type: "uint64" }, { name: "income", type: "uint256" }, { name: "extra", type: "uint256" }, { name: "u1", type: "uint256" }, { name: "u2", type: "uint256" }] },
   { type: "function", name: "starRank", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint8" }] },
   { type: "function", name: "isActive", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "workingReentries", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
@@ -27,6 +30,7 @@ export const protocolAbi = [
 ] as const;
 
 export const erc20Abi = [
+  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "approve", stateMutability: "nonpayable", inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },

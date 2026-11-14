@@ -1,9 +1,12 @@
 import "@nomicfoundation/hardhat-toolbox";
 import "solidity-coverage";
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import path from "node:path";
 import { HardhatUserConfig } from "hardhat/config";
 import { subtask } from "hardhat/config";
 import { TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD } from "hardhat/builtin-tasks/task-names";
+
+loadEnv({ path: path.resolve(__dirname, "../.env"), quiet: true });
 
 subtask(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, async ({ solcVersion }, _hre, runSuper) => {
   if (solcVersion === "0.8.28") {

@@ -6,6 +6,7 @@
     "build": "hardhat compile",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
+    "deploy:mock-usdt:testnet": "hardhat run scripts/deploy-mock-usdt.ts --network bscTestnet",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network bscTestnet"
   },
   "devDependencies": {

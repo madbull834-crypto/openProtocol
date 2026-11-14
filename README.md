@@ -44,11 +44,19 @@ For the web app:
 npm run dev -w frontend
 ```
 
-Set `VITE_PROTOCOL_ADDRESS`, `VITE_USDT_ADDRESS`, `VITE_RPC_URL`, and a real WalletConnect project ID. Without a contract address, the UI deliberately shows a setup state instead of mock production metrics.
+Set `VITE_PROTOCOL_ADDRESS`, `VITE_RPC_URL`, and `VITE_WALLETCONNECT_PROJECT_ID`. The frontend reads the USDT token address directly from the deployed protocol contract, avoiding a second address that could drift out of sync. Without a valid protocol address, the UI deliberately shows a setup state instead of mock production metrics.
 
 ## Contract deployment
 
-1. Resolve the critical questions in `OPEN_QUESTIONS.md` and select three independently reviewed immutable recipient vaults.
+For testnet-only validation, deploy the included 6-decimal mock USDT first:
+
+```bash
+npm run deploy:mock-usdt:testnet -w contracts
+```
+
+The command mints 1,000,000 test USDT to the deployer and prints the `USDT_ADDRESS` value for the protocol configuration. Its `mint` function is intentionally public and must never be used as a production token.
+
+1. Resolve the critical questions in `OPEN_QUESTIONS.md` and select independently reviewed immutable recipient vaults. The current testnet configuration may reuse the deployer for validation only; production should separate custody roles.
 2. Fund the deployer with BSC testnet BNB.
 3. Configure `.env`; never commit the key.
 4. Run `npm run deploy:testnet -w contracts`.

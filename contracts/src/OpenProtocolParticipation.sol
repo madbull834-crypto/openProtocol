@@ -18,7 +18,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     struct WeeklyCompetition { address leader; uint64 winningDirects; bool closed; }
 
     error ZeroAddress();
-    error DuplicatePoolRecipient();
     error UnsupportedTokenDecimals(uint8 decimals);
     error AlreadyRegistered(address account);
     error SponsorNotRegistered(address sponsor);
@@ -105,9 +104,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         if (address(token_) == address(0) || workingPool_ == address(0) || nonWorkingPool_ == address(0)
             || fiveStarClub_ == address(0) || developmentFund_ == address(0) || genesisParticipant_ == address(0)) {
             revert ZeroAddress();
-        }
-        if (workingPool_ == nonWorkingPool_ || workingPool_ == fiveStarClub_ || nonWorkingPool_ == fiveStarClub_) {
-            revert DuplicatePoolRecipient();
         }
         uint8 decimals = token_.decimals();
         if (decimals > 72) revert UnsupportedTokenDecimals(decimals);

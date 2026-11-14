@@ -1,23 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { AreaChart, Area, ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts";
-import { ArrowUpRight, CheckCircle2, ChevronRight, CircleDollarSign, Copy, ExternalLink, Fingerprint, GitBranch, Globe2, LockKeyhole, Network, ShieldCheck, Sparkles, Users, WalletCards, Zap } from "lucide-react";
+import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
 import { isAddress, zeroAddress, type Address } from "viem";
 import { useAccount, useChainId, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { chainId as requiredChainId, explorerUrl, protocolAddress } from "./config";
+import { chainId as requiredChainId, deploymentError, explorerUrl, protocolAddress } from "./config";
 import { erc20Abi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
+import { useMatrixTree, type MatrixNode } from "./matrix";
 
 const allocation = [
-  { name: "Working pool", value: 15, color: "#89ff45" },
-  { name: "Non-working pool", value: 9, color: "#24c8ff" },
-  { name: "Five-star club", value: 1, color: "#8b5cf6" },
+  { name: "Working pool", value: 15, tone: "blue", note: "Funds direct-referral and upline income across the working levels." },
+  { name: "Non-working pool", value: 9, tone: "green", note: "Funds matrix income paid to the matrix parent and uplines, independent of referrals." },
+  { name: "Five-star club", value: 1, tone: "purple", note: "Reserved for members who reach the five-star rank, shared per achievement." },
 ];
 
-const curve = [12, 20, 19, 34, 28, 47, 43, 62, 58, 74, 71, 92].map((value, i) => ({ i, value }));
 const configured = Boolean(protocolAddress);
+const fade = { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 }, transition: { duration: .4, ease: [.25, .1, .25, 1] } } as const;
 
 export default function App() {
   const { view, setView } = useUi();
@@ -51,105 +51,165 @@ export default function App() {
   const participant = participantRead.data;
 
   const nav = [
-    ["overview", "Overview"], ["participate", "Participate"], ["referrals", "Referrals"], ["mechanics", "Mechanics"],
+    ["overview", "Overview"], ["participate", "Participate"], ["referrals", "Network"], ["mechanics", "Mechanics"],
   ] as const;
 
-  return <div className="app-shell">
-    <div className="ambient ambient-a"/><div className="ambient ambient-b"/>
-    <header className="topbar">
-      <button className="brand" onClick={() => setView("overview")}><span className="brand-mark"><span/></span><span>OPEN <b>PROTOCOL</b></span></button>
-      <nav>{nav.map(([key, label]) => <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>
-      <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
+  return <div className="shell">
+    <header className="globalnav">
+      <div className="globalnav-inner">
+        <button className="wordmark" onClick={() => setView("overview")}>Open Protocol</button>
+        <nav>{nav.map(([key, label]) => <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>
+        <div className="globalnav-right"><ConnectButton accountStatus="address" chainStatus="none" showBalance={false} label="Connect"/></div>
+      </div>
     </header>
 
-    {!configured && <div className="setup-banner"><Zap size={16}/> Testnet interface ready. Set <code>VITE_PROTOCOL_ADDRESS</code> after deployment to enable live reads and transactions.</div>}
-    {isConnected && currentChain !== requiredChainId && <button className="network-banner" onClick={() => switchChain({ chainId: requiredChainId })}>Wrong network — switch to BNB Smart Chain <ArrowUpRight size={16}/></button>}
+    {!configured && <div className={`ribbon ${deploymentError ? "ribbon-warn" : ""}`}>{deploymentError ?? <>Interface ready. Set <code>VITE_PROTOCOL_ADDRESS</code> after deployment and live reads and transactions switch on.</>}</div>}
+    {isConnected && currentChain !== requiredChainId && <button className="ribbon ribbon-warn" onClick={() => switchChain({ chainId: requiredChainId })}>This wallet is on another network. Switch to BNB Smart Chain <ChevronRight size={14}/></button>}
 
     <main>
       <AnimatePresence mode="wait">
-        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} invariant={invariant} onParticipate={() => setView("participate")}/>} 
-        {view === "participate" && <Participate key="participate" address={address} token={token} ticket={ticket} registered={Boolean(participant && participant.id > 0n)} refresh={() => { reads.refetch(); participantRead.refetch(); }}/>} 
-        {view === "referrals" && <Referrals key="referrals" address={address} participant={participant}/>} 
+        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} onParticipate={() => setView("participate")} onMechanics={() => setView("mechanics")}/>}
+        {view === "participate" && <Participate key="participate" address={address} token={token} ticket={ticket} registered={Boolean(participant && participant.id > 0n)} refresh={() => { reads.refetch(); participantRead.refetch(); }}/>}
+        {view === "referrals" && <Referrals key="referrals" address={address} participant={participant}/>}
         {view === "mechanics" && <Mechanics key="mechanics"/>}
       </AnimatePresence>
     </main>
-    <footer><span>Open Protocol / testnet validation build</span><span>Immutable core · BSC · USDT</span><span>See OPEN_QUESTIONS.md before deployment</span></footer>
+
+    <footer>
+      <div className="wrap">
+        <p>This is a testnet validation build. It promises no returns and is not ready for mainnet. Read OPEN_QUESTIONS.md before any deployment.</p>
+        <div className="footer-row"><span>Open Protocol</span><span>Immutable core</span><span>BNB Smart Chain</span><span>USDT, BEP-20</span></div>
+      </div>
+    </footer>
   </div>;
 }
 
-function Overview({ memberCount, total, invariant, onParticipate }: { memberCount?: bigint; total?: bigint; invariant?: boolean; onParticipate: () => void }) {
-  return <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-    <div className="hero-grid">
-      <div className="hero-copy">
-        <div className="eyebrow"><Sparkles size={15}/> COMMUNITY INFRASTRUCTURE / ON-CHAIN</div>
-        <h1>Participation,<br/><span>without a black box.</span></h1>
-        <p>A transparent, immutable participation layer on BNB Smart Chain. Every ticket is allocated by code into three visible protocol pools.</p>
-        <div className="hero-actions"><button className="primary" onClick={onParticipate}>Enter protocol <ChevronRight size={18}/></button><button className="secondary" onClick={() => document.getElementById("allocation")?.scrollIntoView({ behavior: "smooth" })}>Explore mechanics</button></div>
-        <div className="trust-row"><span><ShieldCheck/>No admin keys</span><span><LockKeyhole/>Immutable routes</span><span><Globe2/>Public ledger</span></div>
+function Overview({ memberCount, total, ticket, invariant, onParticipate, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; onParticipate: () => void; onMechanics: () => void }) {
+  return <motion.div {...fade}>
+    <section className="hero">
+      <div className="wrap center">
+        <p className="eyebrow">Open Protocol</p>
+        <h1>Every dollar.<br/><span className="grad">Accounted for.</span></h1>
+        <p className="sub">A single $25 ticket. Three fixed pools. One contract no one can alter.</p>
+        <div className="links"><button className="textlink" onClick={onParticipate}>Participate <ChevronRight size={18}/></button><button className="textlink" onClick={onMechanics}>Read the mechanics <ChevronRight size={18}/></button></div>
       </div>
-      <div className="protocol-orbit">
-        <div className="orbit-ring ring-one"/><div className="orbit-ring ring-two"/>
-        <div className="core"><span className="core-label">TICKET</span><strong>$25</strong><small>USDT · BEP-20</small></div>
-        <div className="satellite sat-a"><i/>$15 <small>WORKING</small></div>
-        <div className="satellite sat-b"><i/>$9 <small>NON-WORKING</small></div>
-        <div className="satellite sat-c"><i/>$1 <small>5-STAR</small></div>
+      <div className="stage"><Receipt/></div>
+    </section>
+
+    <section className="stats">
+      <div className="wrap stats-grid">
+        <div><b>{memberCount?.toLocaleString() ?? "—"}</b><span>Members registered</span></div>
+        <div><b>{total === undefined ? "—" : formatToken(total)}</b><span>USDT participated</span></div>
+        <div><b>{ticket === undefined ? "25" : formatToken(ticket)}</b><span>USDT per ticket</span></div>
+        <div><b>{invariant === undefined ? "—" : invariant ? "Yes" : "No"}</b><span>Ledger reconciled</span></div>
       </div>
-    </div>
+      {!configured && <p className="wrap center muted small">Live figures appear once the contract is deployed.</p>}
+    </section>
 
-    <div className="metric-strip">
-      <Metric label="Registered members" value={memberCount?.toLocaleString() ?? "Not deployed"} icon={<Users/>}/>
-      <Metric label="Protocol participation" value={total === undefined ? "Not deployed" : `${formatToken(total)} USDT`} icon={<CircleDollarSign/>}/>
-      <Metric label="Accounting check" value={invariant === undefined ? "Awaiting contract" : invariant ? "Reconciled" : "Mismatch"} icon={<CheckCircle2/>}/>
-    </div>
+    <section className="band gray" id="allocation">
+      <div className="wrap center">
+        <h2>Where the money goes.</h2>
+        <p className="sub">Three allocations, fixed when the contract was deployed and enforced on every ticket since. No treasury decides. No operator routes. Nothing happens off-chain.</p>
+      </div>
+      <div className="wrap-wide bento">
+        <div className="tile tile-wide">
+          <h3>One ticket. Three destinations.</h3>
+          <div className="bar">{allocation.map(a => <i key={a.name} className={a.tone} style={{ flex: a.value }}/>)}</div>
+          <div className="bar-legend">{allocation.map(a => <span key={a.name}><i className={`dot ${a.tone}`}/>{a.name} <b>${a.value}</b></span>)}</div>
+        </div>
+        {allocation.map(a => <div className={`tile tint-${a.tone}`} key={a.name}><i className={`dot big ${a.tone}`}/><b className="tile-num">${a.value}</b><h3>{a.name}</h3><p>{a.note}</p><small>{a.value / 25 * 100}% of each ticket</small></div>)}
+        <div className="tile tile-dark tile-wide glow">
+          <h3>On the ledger.</h3>
+          <dl>
+            <div><dt>Network</dt><dd>BNB Smart Chain {requiredChainId === 56 ? "mainnet" : "testnet"}</dd></div>
+            <div><dt>Settlement</dt><dd>USDT, BEP-20</dd></div>
+            <div><dt>Ticket</dt><dd>25.00 USDT</dd></div>
+            <div><dt>Split</dt><dd>15 + 9 + 1</dd></div>
+            <div><dt>Contract</dt><dd>{protocolAddress ? <a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer" className="mono">{shortAddress(protocolAddress)} <ExternalLink size={12}/></a> : "Awaiting deployment"}</dd></div>
+            <div><dt>Reads</dt><dd>Refreshed every 12 seconds</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
 
-    <div className="section-heading" id="allocation"><div><span>01 / ALLOCATION</span><h2>One ticket. Three transparent pools.</h2></div><p>Pool credits, matrix rewards, ranks, and withdrawals follow the documented testnet assumptions.</p></div>
-    <div className="allocation-grid">
-      <div className="glass pie-card"><ResponsiveContainer width="100%" height={280}><PieChart><Pie data={allocation} dataKey="value" innerRadius={78} outerRadius={108} paddingAngle={4} stroke="none">{allocation.map(x => <Cell key={x.name} fill={x.color}/>)}</Pie><Tooltip contentStyle={{ background: "#0a0e17", border: "1px solid #243149", borderRadius: 12 }}/></PieChart></ResponsiveContainer><div className="pie-center"><b>$25</b><span>per ticket</span></div></div>
-      <div className="allocation-list">{allocation.map((item, i) => <div className="allocation-row" key={item.name}><span className="allocation-index">0{i + 1}</span><i style={{ background: item.color }}/><div><b>{item.name}</b><small>{item.value / 25 * 100}% of every ticket</small></div><strong>${item.value}</strong></div>)}</div>
-      <div className="glass telemetry"><div className="card-label">NETWORK SIGNAL</div><div className="signal-value">BSC <span>TESTNET</span></div><ResponsiveContainer width="100%" height={130}><AreaChart data={curve}><defs><linearGradient id="signal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#89ff45" stopOpacity=".45"/><stop offset="1" stopColor="#89ff45" stopOpacity="0"/></linearGradient></defs><Area type="monotone" dataKey="value" stroke="#89ff45" strokeWidth={2} fill="url(#signal)"/></AreaChart></ResponsiveContainer><div className="telemetry-foot"><span><i/>LIVE READS</span><span>12s refresh</span></div></div>
-    </div>
-  </motion.section>;
+    <section className="band black">
+      <div className="wrap center">
+        <h2>Two confirmations.<br/><span className="grad-cool">That's the whole process.</span></h2>
+        <p className="sub">The contract does the rest, in the order it says it will.</p>
+      </div>
+      <div className="wrap-wide steps">
+        {[["Connect a wallet.", "Any wallet that supports BNB Smart Chain. Set it to the testnet before you begin."], ["Name a sponsor.", "The address of one existing member. The link is recorded once and cannot be edited afterwards."], ["Approve, then register.", "Grant an allowance of exactly 25 USDT and confirm. The three-way split executes in the same transaction."]].map(([t, b], i) => <div className="tile tile-dark" key={t}><span className="step-n">{i + 1}</span><h3>{t}</h3><p>{b}</p></div>)}
+      </div>
+    </section>
+
+    <section className="band gradient">
+      <div className="wrap center">
+        <h2>Read the contract.<br/>Then decide.</h2>
+        <p className="sub">This is a testnet build for validation. It promises no returns, and the reward rules it runs on are prototypes that still require an independent audit.</p>
+        <div className="links"><button className="pill light" onClick={onParticipate}>Participate</button><button className="textlink light" onClick={onMechanics}>See the documented mechanics <ChevronRight size={18}/></button></div>
+      </div>
+    </section>
+  </motion.div>;
 }
 
-function Metric({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) { return <div className="metric"><span className="metric-icon">{icon}</span><div><small>{label}</small><strong>{value}</strong></div></div>; }
+function Receipt() {
+  return <div className="receipt">
+    <div className="receipt-head"><span>Participation receipt</span><span>Preview</span></div>
+    <div className="receipt-total"><b>$25</b><small>USDT on BNB Smart Chain</small></div>
+    <ul>{allocation.map(a => <li key={a.name}><i className={`dot ${a.tone}`}/><span>{a.name}</span><b>${a.value}.00</b></li>)}</ul>
+    <div className="receipt-foot"><span>Settled by contract</span><b>$25.00</b></div>
+  </div>;
+}
 
 function Participate({ address, token, ticket, registered, refresh }: { address?: Address; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
   const refFromUrl = new URLSearchParams(location.search).get("ref") ?? "";
   const [sponsor, setSponsor] = useState(refFromUrl);
   const { data: allowance, refetch: refetchAllowance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, protocolAddress ?? zeroAddress], query: { enabled: Boolean(token && address && protocolAddress) } });
+  const { data: balance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address) } });
+  const sponsorAddressValid = isAddress(sponsor) && sponsor.toLowerCase() !== address?.toLowerCase();
+  const sponsorRead = useReadContract({
+    ...(protocolAddress ? { address: protocolAddress, abi: protocolAbi } : { address: zeroAddress, abi: protocolAbi }),
+    functionName: "getParticipant",
+    args: [sponsorAddressValid ? sponsor as Address : zeroAddress],
+    query: { enabled: configured && sponsorAddressValid, retry: 2 },
+  });
   const approve = useWriteContract(); const register = useWriteContract();
   const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data });
   const registerReceipt = useWaitForTransactionReceipt({ hash: register.data });
   const approved = ticket !== undefined && allowance !== undefined && allowance >= ticket;
   useEffect(() => { if (approveReceipt.isSuccess) refetchAllowance(); }, [approveReceipt.isSuccess, refetchAllowance]);
   useEffect(() => { if (registerReceipt.isSuccess) refresh(); }, [registerReceipt.isSuccess, refresh]);
-  const validSponsor = isAddress(sponsor) && sponsor.toLowerCase() !== address?.toLowerCase();
+  const validSponsor = sponsorAddressValid && Boolean(sponsorRead.data && sponsorRead.data.id > 0n);
+  const hasBalance = ticket !== undefined && balance !== undefined && balance >= ticket;
   const busy = approve.isPending || approveReceipt.isLoading || register.isPending || registerReceipt.isLoading;
+  const sponsorMessage = !sponsorAddressValid ? "Enter a valid address that is not your own wallet." : sponsorRead.isLoading ? "Checking this sponsor on-chain…" : validSponsor ? "Registered sponsor verified on-chain." : "This address is not a registered sponsor.";
 
-  return <motion.section className="page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-    <div className="page-title"><div><span>PARTICIPATION FLOW</span><h1>Enter with full visibility.</h1></div><p>Two wallet confirmations. Funds remain contract-backed until rewards are claimed.</p></div>
-    <div className="flow-grid">
-      <div className="glass action-panel">
-        <div className="step-head"><span>01</span><div><b>Sponsor address</b><small>Permanent on-chain relationship</small></div></div>
-        <label>Sponsor wallet<input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
-        <div className={`validation ${validSponsor ? "ok" : ""}`}>{validSponsor ? <><CheckCircle2/>Valid address</> : "Enter a valid sponsor other than your wallet"}</div>
-        <div className="step-divider"/>
-        <div className="step-head"><span>02</span><div><b>Authorize ticket</b><small>Exact allowance · {formatToken(ticket)} USDT</small></div></div>
-        <div className="tx-summary"><div><span>Working pool</span><b>15 USDT</b></div><div><span>Non-working pool</span><b>9 USDT</b></div><div><span>Five-star club</span><b>1 USDT</b></div><div className="total"><span>Total</span><b>25 USDT</b></div></div>
-        {!address ? <div className="connect-hint"><WalletCards/>Connect a wallet to continue</div> : registered ? <div className="success-box"><CheckCircle2/><div><b>Already participating</b><span>Your wallet is registered in the immutable graph.</span></div></div> : <div className="button-stack">
-          {!approved && <button className="primary full" disabled={!token || !ticket || busy} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!] })}>{approveReceipt.isLoading ? "Confirming approval…" : "Approve 25 USDT"}</button>}
-          <button className="primary full" disabled={!approved || !validSponsor || busy} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address] })}>{registerReceipt.isLoading ? "Allocating on-chain…" : approved ? "Confirm participation" : "Approve before participating"}</button>
-        </div>}
-        {(approve.error || register.error) && <div className="error-box">{(approve.error ?? register.error)?.message.split("\n")[0]}</div>}
-        {registerReceipt.data && <a className="tx-link" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View confirmed transaction <ExternalLink size={14}/></a>}
+  return <motion.div {...fade}>
+    <section className="page-hero"><div className="wrap center"><p className="eyebrow">Participate</p><h1>Two confirmations.<br/><span className="grad">Nothing else.</span></h1><p className="sub">Approve the allowance, then register. Your funds remain with the contract until rewards are claimed.</p></div></section>
+    <section className="band gray">
+      <div className="wrap-wide two-col">
+        <div className="tile form">
+          <div className="form-step"><span className="step-n">1</span><div><h3>Sponsor.</h3><p>The address of an existing member. This relationship is permanent.</p></div></div>
+          <label>Sponsor wallet address<input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
+          <p className={`hint ${validSponsor ? "ok" : ""}`}>{validSponsor && <Check size={14}/>} {sponsorMessage}</p>
+          <hr/>
+          <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(ticket) === "—" ? "25" : formatToken(ticket)} USDT. Not a cent more.</p></div></div>
+          <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(balance)} USDT</b></li>}</ul>
+          {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done"><Check size={18}/><div><b>You're already registered.</b><span>This wallet holds a place in the sponsor graph.</span></div></div> : <div className="stack">
+            {!approved && <button className="pill wide" disabled={!token || !ticket || !hasBalance || busy} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!] })}>{approveReceipt.isLoading ? "Confirming approval…" : hasBalance ? "Approve 25 USDT" : "Insufficient USDT balance"}</button>}
+            <button className="pill wide" disabled={!approved || !validSponsor || busy} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address] })}>{registerReceipt.isLoading ? "Registering on-chain…" : approved ? "Confirm participation" : "Approval comes first"}</button>
+          </div>}
+          {(approve.error || register.error) && <p className="error">{(approve.error ?? register.error)?.message.split("\n")[0]}</p>}
+          {registerReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the confirmed transaction <ExternalLink size={14}/></a>}
+        </div>
+        <div className="side">
+          <div className="tile"><small className="label">Your wallet</small><b className="tile-num mono">{shortAddress(address)}</b><p>Your ticket funds the contract-held pools and the reward accounting that sits behind them.</p></div>
+          <div className="tile"><small className="label">Conservation</small><b className="tile-num">15 + 9 + 1 = 25</b><p>If any recipient would receive less than its exact share, the registration reverts in full. Nothing partial ever settles.</p></div>
+          <div className="tile tile-dark"><small className="label">Testnet assumptions apply</small><p>Matrix placement, ranks, rewards and withdrawals run on documented prototype assumptions. They need an independent audit before any production use.</p></div>
+        </div>
       </div>
-      <div className="side-stack">
-        <div className="glass info-card"><Fingerprint/><span>YOUR WALLET</span><b>{shortAddress(address)}</b><small>Your ticket funds contract-backed pool and reward accounting.</small></div>
-        <div className="glass info-card"><ShieldCheck/><span>CONSERVATION</span><b>15 + 9 + 1 = 25</b><small>Registration reverts atomically if any recipient receives less than its exact amount.</small></div>
-        <div className="warning"><LockKeyhole/><div><b>Testnet assumptions</b><span>Matrix, ranks, rewards, and withdrawals are enabled for validation and require audit before production.</span></div></div>
-      </div>
-    </div>
-  </motion.section>;
+    </section>
+  </motion.div>;
 }
 
 function Referrals({ address, participant }: { address?: Address; participant?: { id: bigint; directCount: bigint; sponsor: Address; joinedAt: bigint } }) {
@@ -165,6 +225,7 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
       { address: protocolAddress, abi: protocolAbi, functionName: "pendingSingleLegIncome", args: [account] },
       { address: protocolAddress, abi: protocolAbi, functionName: "pendingWorkingPoolIncome", args: [account] },
       { address: protocolAddress, abi: protocolAbi, functionName: "pendingNonWorkingPoolIncome", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, functionName: "singleLegLevel", args: [account] },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -180,28 +241,165 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
   const rank = rewards.data?.[4]?.result as number | undefined;
   const placement = rewards.data?.[5]?.result as Address | undefined;
   const queued = ([6, 7, 8] as const).reduce((sum, index) => sum + ((rewards.data?.[index]?.result as bigint | undefined) ?? 0n), 0n);
-  const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "Connect a wallet to generate your link";
+  const singleLeg = rewards.data?.[9]?.result as number | undefined;
+  const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "Connect a wallet to create your link";
   const joined = participant?.joinedAt ? new Date(Number(participant.joinedAt) * 1000).toLocaleDateString() : "—";
-  return <motion.section className="page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-    <div className="page-title"><div><span>REFERRAL & REWARDS</span><h1>Your on-chain footprint.</h1></div><p>Sponsorship is permanent and placement follows the global breadth-first matrix.</p></div>
-    <div className="ref-grid">
-      <div className="glass referral-card"><GitBranch/><span>PERSONAL INVITE</span><div className="copy-field"><code>{link}</code><button disabled={!address} onClick={() => navigator.clipboard.writeText(link)}><Copy size={16}/></button></div><small>This link pre-fills your wallet as sponsor. It does not promise placement or income.</small></div>
-      <div className="glass profile-card"><div className="profile-mark">#{participant?.id?.toString() ?? "—"}</div><div><span>MEMBER ID</span><b>{participant?.id?.toString() ?? "Not registered"}</b></div><div><span>DIRECT REFERRALS</span><b>{participant?.directCount?.toString() ?? "—"}</b></div><div><span>SPONSOR</span><b>{participant?.sponsor === zeroAddress ? "Genesis" : shortAddress(participant?.sponsor)}</b></div><div><span>JOINED</span><b>{joined}</b></div></div>
-    </div>
-    <div className="glass rewards-panel"><div><span>CLAIMABLE</span><b>{formatToken(withdrawable)} USDT</b></div><div><span>QUEUED POOLS</span><b>{formatToken(queued)} USDT</b></div><div><span>TEAM</span><b>{team?.toString() ?? "—"}</b></div><div><span>LEVELS</span><b>{working ?? "—"} / {nonWorking ?? "—"}</b></div><div><span>STAR RANK</span><b>{rank ?? "—"}</b></div><div><span>MATRIX PARENT</span><b>{placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b></div><button className="primary" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards" })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button><button className="primary" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim" })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"}</button></div>
-  </motion.section>;
+  const [copied, setCopied] = useState(false);
+  const [networkView, setNetworkView] = useState<"matrix" | "working" | "single">("matrix");
+  const copy = () => { navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1600); };
+
+  return <motion.div {...fade}>
+    <section className="page-hero"><div className="wrap center"><p className="eyebrow">Network</p><h1>Your place.<br/><span className="grad">On the record.</span></h1><p className="sub">Sponsorship is permanent. Placement follows the global breadth-first matrix, never anyone's discretion.</p></div></section>
+    <section className="band gray">
+      <div className="wrap-wide bento">
+        <div className="tile tile-wide">
+          <small className="label">Your invitation</small>
+          <div className="copy-row"><code>{link}</code><button disabled={!address} onClick={copy} aria-label="Copy link">{copied ? <Check size={16}/> : <Copy size={16}/>}</button></div>
+          <p>Anyone who follows this link will have your wallet entered as their sponsor. It promises neither placement nor income.</p>
+        </div>
+        <div className="tile"><small className="label">Member</small><b className="tile-num">{participant?.id ? `No. ${participant.id.toString()}` : "—"}</b><p>{participant?.id ? `Joined ${joined}` : "Not registered"}</p></div>
+        <div className="tile"><small className="label">Direct referrals</small><b className="tile-num">{participant?.directCount?.toString() ?? "—"}</b><p>Members who named you as sponsor.</p></div>
+        <div className="tile"><small className="label">Sponsor</small><b className="tile-num mono">{!participant?.id ? "—" : participant.sponsor === zeroAddress ? "Genesis" : shortAddress(participant.sponsor)}</b><p>Recorded once. Never changes.</p></div>
+        <div className="tile tile-dark tile-wide rewards">
+          <div className="rewards-grid">
+            <div><small className="label">Claimable</small><b className="tile-num">{formatToken(withdrawable)} <em>USDT</em></b></div>
+            <div><small className="label">Awaiting settlement</small><b className="tile-num">{formatToken(queued)} <em>USDT</em></b></div>
+            <div><small className="label">Team</small><b className="tile-num">{team?.toString() ?? "—"}</b></div>
+            <div><small className="label">Levels</small><b className="tile-num">{working ?? "—"} <em>/</em> {nonWorking ?? "—"}</b></div>
+            <div><small className="label">Star rank</small><b className="tile-num">{rank ?? "—"}</b></div>
+            <div><small className="label">Matrix parent</small><b className="tile-num mono">{placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b></div>
+          </div>
+          <div className="stack row">
+            <button className="pill ghost" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards" })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button>
+            <button className="pill" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim" })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"}</button>
+          </div>
+        </div>
+        <div className="tile tile-wide matrix">
+          <div className="network-intro"><small className="label">Your network, explained</small><h3>Three systems. Three different jobs.</h3><p>Choose a view to see where you are placed, how your Working Pool advances, or what your next Single-Leg milestone requires.</p></div>
+          <div className="system-switcher" role="tablist" aria-label="Network system">
+            <button className={networkView === "matrix" ? "active" : ""} onClick={() => setNetworkView("matrix")}><small>01</small><b>Global Matrix</b><span>Where you are placed</span></button>
+            <button className={networkView === "working" ? "active" : ""} onClick={() => setNetworkView("working")}><small>02</small><b>Working Pool</b><span>Levels from team growth</span></button>
+            <button className={networkView === "single" ? "active" : ""} onClick={() => setNetworkView("single")}><small>03</small><b>Single Leg</b><span>Team + direct milestones</span></button>
+          </div>
+          {networkView === "matrix" && <><div className="view-heading"><div><small>GLOBAL MATRIX</small><h4>Your placement tree</h4></div><p>Everyone enters one shared binary queue. Each member can have two children. Your sponsor and your matrix parent can be different.</p></div><div className="logic-strip"><div><b>1</b><span>Register</span><small>A new member joins</small></div><i/><div><b>2</b><span>Queue placement</span><small>Next open position</small></div><i/><div><b>3</b><span>Two per parent</span><small>Then the queue moves on</small></div></div><MatrixTree address={address} parent={placement}/></>}
+          {networkView === "working" && <WorkingTree address={address} team={team} currentLevel={working}/>}
+          {networkView === "single" && <SingleLegTree address={address} team={team} directs={participant?.directCount} currentLevel={singleLeg}/>}
+        </div>
+      </div>
+    </section>
+  </motion.div>;
 }
 
-function Mechanics() { return <motion.section className="page" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-    <div className="page-title"><div><span>DOCUMENTED MECHANICS</span><h1>Facts separated from claims.</h1></div><p>Only reconciled rules are executable.</p></div>
-    <div className="mechanics-grid">{[
-      ["01", "$25 participation", "The source defines one USDT ticket on BNB Smart Chain."],
-      ["02", "Exact allocation", "$15 working, $9 non-working, and $1 five-star club."],
-      ["03", "Immutable sponsorship", "A wallet registers once against an existing sponsor."],
-      ["04", "No protocol admin", "The implemented core has no owner, upgrade, pause, or rescue authority."],
-      ["05", "Testnet reward engine", "Matrix income, uplines, levels, ranks, re-entry, weekly rewards, and claims use explicit prototype assumptions."],
-      ["06", "Public verification", "Events, balances, recipients, and accounting totals remain queryable."],
-    ].map(([n, title, body]) => <div className="mechanic" key={n}><span>{n}</span><h3>{title}</h3><p>{body}</p><ArrowUpRight/></div>)}</div>
-    <div className="disclosure"><ShieldCheck/><div><b>Testnet validation only</b><p>This build does not represent guaranteed returns and is not ready for mainnet. Missing financial rules require written clarification and independent security/legal review.</p></div></div>
-  </motion.section>;
+type WorkingQuote = readonly [bigint, bigint, bigint, bigint, bigint];
+type SingleLegQuote = readonly [bigint, bigint, bigint, bigint, bigint, bigint];
+
+function WorkingTree({ address, team, currentLevel }: { address?: Address; team?: bigint; currentLevel?: number }) {
+  const quotes = useReadContracts({
+    allowFailure: true,
+    contracts: protocolAddress ? Array.from({ length: 8 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, functionName: "workingLevelQuote" as const, args: [index + 1] as const })) : [],
+    query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
+  });
+  const teamValue = Number(team ?? 0n);
+  return <div className="progression-view">
+    <div className="view-heading"><div><small>WORKING POOL</small><h4>Team growth unlocks levels</h4></div><p>Every two additional team members unlock the next level. The contract calculates the turnover, reserves the next upgrade, and queues the remainder.</p></div>
+    <div className="logic-strip"><div><b>1</b><span>Team grows</span><small>All downline members count</small></div><i/><div><b>2</b><span>Threshold reached</span><small>2, 4, 6… members</small></div><i/><div><b>3</b><span>Reward queued</span><small>Settle when backed</small></div></div>
+    <div className="progression-owner"><span className="owner-mark">W</span><div><small>WORKING POOL</small><b>{address ? shortAddress(address) : "Connect wallet"}</b></div><strong>Level {currentLevel ?? 0} / 8</strong></div>
+    <div className="progression-stem"/>
+    <div className="working-levels">{Array.from({ length: 8 }, (_, index) => {
+      const level = index + 1;
+      const quote = quotes.data?.[index]?.result as WorkingQuote | undefined;
+      const required = Number(quote?.[0] ?? BigInt(level * 2));
+      const reached = (currentLevel ?? 0) >= level;
+      const current = !reached && level === (currentLevel ?? 0) + 1;
+      const progress = Math.min(100, required ? teamValue / required * 100 : 0);
+      return <div className={`level-card ${reached ? "reached" : current ? "current" : ""}`} key={level}>
+        <div className="level-top"><span>LEVEL {level}</span><b>{reached ? "Reached" : current ? "In progress" : "Locked"}</b></div>
+        <strong>{required} team members</strong>
+        <p>ID amount {formatToken(quote?.[1])} USDT · {formatToken(quote?.[4])} distributable</p>
+        <div className="level-progress"><i style={{ width: `${reached ? 100 : current ? progress : 0}%` }}/></div>
+        <small>{reached ? `${required}/${required} complete` : current ? `${Math.min(teamValue, required)}/${required} members` : `Unlock after Level ${level - 1}`}</small>
+      </div>;
+    })}</div>
+    <p className="tree-disclaimer">Working levels advance automatically when the on-chain team count reaches each threshold. Amounts are read from the deployed contract.</p>
+  </div>;
+}
+
+function SingleLegTree({ address, team, directs, currentLevel }: { address?: Address; team?: bigint; directs?: bigint; currentLevel?: number }) {
+  const quotes = useReadContracts({
+    allowFailure: true,
+    contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
+    query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
+  });
+  const teamValue = Number(team ?? 0n);
+  const directValue = Number(directs ?? 0n);
+  return <div className="progression-view single-view">
+    <div className="view-heading"><div><small>SINGLE LEG</small><h4>Two requirements move together</h4></div><p>A milestone completes only when you have both the required total team and the required number of personally sponsored members.</p></div>
+    <div className="logic-strip"><div><b>1</b><span>Build your team</span><small>All downline members</small></div><i/><div><b>+</b><span>Add directs</span><small>Your personal referrals</small></div><i/><div><b>3</b><span>Complete level</span><small>Both must be satisfied</small></div></div>
+    <div className="progression-owner"><span className="owner-mark single">S</span><div><small>SINGLE LEG</small><b>{address ? shortAddress(address) : "Connect wallet"}</b></div><strong>Level {currentLevel ?? 0} / 10</strong></div>
+    <div className="single-path">{Array.from({ length: 10 }, (_, index) => {
+      const level = index + 1;
+      const quote = quotes.data?.[index]?.result as SingleLegQuote | undefined;
+      const members = Number(quote?.[0] ?? 0n);
+      const directNeed = Number(quote?.[1] ?? 0n);
+      const reached = (currentLevel ?? 0) >= level;
+      const current = !reached && level === (currentLevel ?? 0) + 1;
+      const income = (quote?.[2] ?? 0n) + (quote?.[3] ?? 0n);
+      return <div className={`single-step ${reached ? "reached" : current ? "current" : ""}`} key={level}>
+        <span className="single-node">{reached ? <Check size={15}/> : level}</span>
+        <div className="single-copy"><div><small>LEVEL {level}</small><b>{reached ? "Completed" : current ? "Next milestone" : "Locked"}</b></div><p>{members} team · {directNeed} direct {directNeed === 1 ? "referral" : "referrals"}</p></div>
+        <div className="single-numbers"><small>YOUR PROGRESS</small><b>{Math.min(teamValue, members)}/{members} team · {Math.min(directValue, directNeed)}/{directNeed} direct</b></div>
+        <div className="single-income"><small>LEVEL INCOME</small><b>{formatToken(income)} USDT</b></div>
+      </div>;
+    })}</div>
+    <p className="tree-disclaimer">A Single-Leg level completes only when both the team and direct-referral requirements are met. Income excludes the separately credited first and second uplines.</p>
+  </div>;
+}
+
+function MatrixTree({ address, parent }: { address?: Address; parent?: Address }) {
+  const { tree, loading, filled, failed } = useMatrixTree(address);
+  if (!address) return <div className="empty">Connect a wallet to see your position in the matrix.</div>;
+  const root: MatrixNode = tree ?? { address, children: [null, null] };
+  return <div className="tree-wrap">
+    <div className="tree-meta"><span>{loading ? "Reading the matrix…" : configured ? `${filled} of 14 visible positions filled` : "Awaiting deployment"}</span><span className="tree-legend"><i className="slot-key you"/>You<i className="slot-key member"/>Member<i className="slot-key open"/>Open</span></div>
+    <div className="tree-progress" aria-label={`${filled} of 14 visible matrix positions filled`}><span style={{ width: `${filled / 14 * 100}%` }}/></div>
+    {failed > 0 && <p className="tree-warning">{failed} on-chain {failed === 1 ? "read" : "reads"} could not be completed. Successful branches remain visible and failed reads retry automatically.</p>}
+    <div className="tree">
+      <div className="tnode parent"><div className="slot ghost"><small>Matrix parent</small><b>{parent === undefined ? "—" : parent === zeroAddress ? "Genesis" : shortAddress(parent)}</b></div></div>
+      <TreeNode node={root} depth={0} self={address}/>
+    </div>
+    <div className="mobile-tree">
+      <div className="mobile-parent"><span>Matrix parent</span><b>{parent === undefined ? "—" : parent === zeroAddress ? "Genesis" : shortAddress(parent)}</b></div>
+      {[0, 1, 2, 3].map((depth) => <div className="mobile-level" key={depth}><div className="mobile-level-head"><span>{depth === 0 ? "YOU" : `LEVEL ${depth}`}</span><small>{depth === 0 ? "Your position" : `${2 ** depth} positions`}</small></div><div className="mobile-level-nodes">{matrixLevel(root, depth).map((node, index) => <div className={`mobile-node ${depth === 0 ? "you" : node ? "member" : "open"}`} key={index}><span>{node ? node.id ? `Member ${node.id}` : depth === 0 ? "You" : "Member" : "Open"}</span><b>{node ? shortAddress(node.address) : `Position ${index + 1}`}</b></div>)}</div></div>)}
+    </div>
+  </div>;
+}
+
+function matrixLevel(root: MatrixNode, depth: number): (MatrixNode | null)[] {
+  let level: (MatrixNode | null)[] = [root];
+  for (let current = 0; current < depth; current += 1) level = level.flatMap((node) => node ? node.children : [null, null]);
+  return level;
+}
+
+function TreeNode({ node, depth, self }: { node: MatrixNode | null; depth: number; self: Address }) {
+  const leaf = depth >= 3;
+  return <div className="tnode">
+    {node ? <div className={`slot ${node.address.toLowerCase() === self.toLowerCase() ? "you" : "member"}`}><small>{node.address.toLowerCase() === self.toLowerCase() ? "You" : node.id ? `No. ${node.id.toString()}` : "Member"}</small><b>{shortAddress(node.address)}</b></div> : <div className="slot open"><small>Open</small><b>Level {depth}</b></div>}
+    {!leaf && <div className="kids"><TreeNode node={node?.children[0] ?? null} depth={depth + 1} self={self}/><TreeNode node={node?.children[1] ?? null} depth={depth + 1} self={self}/></div>}
+  </div>;
+}
+
+function Mechanics() { return <motion.div {...fade}>
+    <section className="page-hero"><div className="wrap center"><p className="eyebrow">Mechanics</p><h1>Facts.<br/><span className="grad">Kept apart from claims.</span></h1><p className="sub">Only rules that reconcile with the source document are executable. Everything else waits for written clarification.</p></div></section>
+    <section className="band gray">
+      <div className="wrap-wide bento three">{[
+        ["A single $25 ticket.", "The source document defines one USDT ticket, settled on BNB Smart Chain."],
+        ["Allocation to the dollar.", "$15 to the working pool, $9 to the non-working pool, $1 to the five-star club. Enforced on every ticket."],
+        ["Sponsorship, written once.", "A wallet registers once, against an existing sponsor. The record never changes."],
+        ["No one holds the keys.", "The implemented core has no owner, no upgrade path, no pause switch and no rescue authority."],
+        ["A reward engine for testnet.", "Matrix income, uplines, levels, ranks, re-entry, weekly rewards and claims run on documented prototype assumptions."],
+        ["Verification for anyone.", "Events, balances, recipients and accounting totals stay queryable by anyone, at any time."],
+      ].map(([t, b], i) => <div className="tile" key={t}><small className="label">{String(i + 1).padStart(2, "0")}</small><h3>{t}</h3><p>{b}</p></div>)}</div>
+      <div className="wrap-wide"><div className="tile tile-dark notice-tile"><h3>For testnet validation only.</h3><p>This build guarantees no returns and is not ready for mainnet. Unresolved financial rules need written clarification, followed by independent security and legal review.</p></div></div>
+    </section>
+  </motion.div>;
 }
