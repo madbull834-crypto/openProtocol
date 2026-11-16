@@ -4,7 +4,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
 import { isAddress, zeroAddress, type Address } from "viem";
 import { useAccount, useBalance, useChainId, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { chainId as requiredChainId, deploymentError, explorerUrl, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
+import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
 import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
@@ -171,10 +171,12 @@ function Receipt() {
 }
 
 function Participate({ address, currentChain, token, ticket, registered, refresh }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
+  const { connector } = useAccount();
   const refFromUrl = new URLSearchParams(location.search).get("ref") ?? "";
-  const [sponsor, setSponsor] = useState(refFromUrl);
+  const [sponsor, setSponsor] = useState(refFromUrl || genesisSponsor || "");
+  const [assetStatus, setAssetStatus] = useState<"idle" | "adding" | "added" | "unsupported">("idle");
   const { data: allowance, refetch: refetchAllowance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, protocolAddress ?? zeroAddress], query: { enabled: Boolean(token && address && protocolAddress) } });
-  const { data: balance, refetch: refetchBalance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address) } });
+  const { data: balance, refetch: refetchBalance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address), refetchInterval: 4_000 } });
   const { data: gasBalance } = useBalance({ address, query: { enabled: Boolean(address) && currentChain === 97 } });
   const sponsorAddressValid = isAddress(sponsor) && sponsor.toLowerCase() !== address?.toLowerCase();
   const sponsorRead = useReadContract({
@@ -217,6 +219,34 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
     : /user rejected|user denied/i.test(mint.error.message)
       ? "The mint transaction was cancelled in your wallet."
       : mint.error.message.split("\n")[0]);
+  const transactionError = mintErrorMessage ?? (approve.error && (/user rejected|user denied/i.test(approve.error.message)
+    ? "The approval was cancelled in your wallet."
+    : approve.error.message.split("\n")[0])) ?? (register.error && (/AlreadyRegistered/i.test(register.error.message)
+      ? "This wallet is already registered."
+      : /SponsorNotRegistered/i.test(register.error.message)
+        ? "The selected sponsor is not registered. Use the verified testnet sponsor shown above."
+        : /insufficient.*balance|exceeds balance/i.test(register.error.message)
+          ? "Your wallet needs at least 25 USDT before it can register."
+          : /allowance|approval/i.test(register.error.message)
+            ? "The USDT approval is missing or expired. Approve 25 USDT again."
+            : /user rejected|user denied/i.test(register.error.message)
+              ? "Registration was cancelled in your wallet."
+              : register.error.message.split("\n")[0]));
+  const addTokenToWallet = async () => {
+    if (!connector || !testTokenAddress) return;
+    setAssetStatus("adding");
+    try {
+      const provider = await connector.getProvider() as { request?: (request: { method: string; params?: unknown }) => Promise<unknown> };
+      if (!provider.request) throw new Error("wallet_watchAsset is unavailable");
+      const added = await provider.request({
+        method: "wallet_watchAsset",
+        params: { type: "ERC20", options: { address: testTokenAddress, symbol: "USDT", decimals: 6 } },
+      });
+      setAssetStatus(added === false ? "idle" : "added");
+    } catch {
+      setAssetStatus("unsupported");
+    }
+  };
   const sponsorMessage = !sponsorAddressValid ? "Enter a valid address that is not your own wallet." : sponsorRead.isLoading ? "Checking this sponsor on-chain…" : validSponsor ? "Registered sponsor verified on-chain." : "This address is not a registered sponsor.";
 
   return <motion.div {...fade}>
@@ -228,20 +258,27 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
             <div><small>BSC TESTNET FAUCET</small><b>Get test USDT first</b><span>Mint 1,000 MockUSDT directly to your connected wallet. These testing tokens have no real value.</span></div>
             <div className="test-funds-actions">
               <button className="pill" disabled={!canMintTestToken || busy} onClick={() => mint.writeContract({ address: testTokenAddress!, abi: mockUsdtAbi, functionName: "mint", args: [address!, 1_000_000_000n], chainId: 97 })}>{mintButtonLabel}</button>
+              {address && <button className="token-link" disabled={assetStatus === "adding"} onClick={addTokenToWallet}>{assetStatus === "adding" ? "Opening wallet…" : assetStatus === "added" ? "USDT added to wallet" : "Add USDT to wallet"}</button>}
               <a href="https://www.bnbchain.org/en/testnet-faucet" target="_blank" rel="noreferrer">Get test BNB for gas <ExternalLink size={11}/></a>
+            </div>
+            <div className="test-token-details">
+              <span>MockUSDT contract</span>
+              <a href={`${explorerUrl}/token/${testTokenAddress}`} target="_blank" rel="noreferrer">{testTokenAddress} <ExternalLink size={11}/></a>
+              {assetStatus === "unsupported" && <small>Your wallet could not add it automatically. Import this contract address manually as a custom token with 6 decimals.</small>}
             </div>
           </div>}
           <div className="form-step"><span className="step-n">1</span><div><h3>Sponsor.</h3><p>The address of an existing member. This relationship is permanent.</p></div></div>
           <label>Sponsor wallet address<input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
+          {!refFromUrl && genesisSponsor && sponsor.toLowerCase() === genesisSponsor.toLowerCase() && <p className="default-sponsor">Using the verified genesis sponsor for this testnet deployment.</p>}
           <p className={`hint ${validSponsor ? "ok" : ""}`}>{validSponsor && <Check size={14}/>} {sponsorMessage}</p>
           <hr/>
           <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(ticket) === "—" ? "25" : formatToken(ticket)} USDT. Not a cent more.</p></div></div>
           <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(balance)} USDT</b></li>}</ul>
           {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done"><Check size={18}/><div><b>You're already registered.</b><span>This wallet holds a place in the sponsor graph.</span></div></div> : <div className="stack">
-            {!approved && <button className="pill wide" disabled={!token || !ticket || !hasBalance || busy} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!] })}>{approveReceipt.isLoading ? "Confirming approval…" : hasBalance ? "Approve 25 USDT" : "Insufficient USDT balance"}</button>}
-            <button className="pill wide" disabled={!approved || !validSponsor || busy} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address] })}>{registerReceipt.isLoading ? "Registering on-chain…" : approved ? "Confirm participation" : "Approval comes first"}</button>
+            {!approved && <button className="pill wide" disabled={!token || !ticket || !hasBalance || busy || currentChain !== requiredChainId} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming approval…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : hasBalance ? "Approve 25 USDT" : "Get test USDT first"}</button>}
+            <button className="pill wide" disabled={!approved || !hasBalance || !validSponsor || busy || currentChain !== requiredChainId} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address], chainId: requiredChainId })}>{registerReceipt.isLoading ? "Registering on-chain…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : !hasBalance ? "Get test USDT first" : approved ? "Confirm participation" : "Approval comes first"}</button>
           </div>}
-          {(mint.error || approve.error || register.error) && <p className="error">{mintErrorMessage ?? (approve.error ?? register.error)?.message.split("\n")[0]}</p>}
+          {transactionError && <p className="error">{transactionError}</p>}
           {mintReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${mintReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the mint transaction <ExternalLink size={14}/></a>}
           {registerReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the confirmed transaction <ExternalLink size={14}/></a>}
         </div>

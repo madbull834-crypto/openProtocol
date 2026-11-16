@@ -16,6 +16,11 @@ const configuredTestToken = import.meta.env.VITE_TEST_TOKEN_ADDRESS?.trim() || d
 export const testTokenAddress = (configuredTestToken && isAddress(configuredTestToken)
   ? getAddress(configuredTestToken)
   : undefined) as Address | undefined;
+const defaultTestSponsor = chainId === 97 ? "0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0" : undefined;
+const configuredGenesisSponsor = import.meta.env.VITE_GENESIS_SPONSOR?.trim() || defaultTestSponsor;
+export const genesisSponsor = (configuredGenesisSponsor && isAddress(configuredGenesisSponsor)
+  ? getAddress(configuredGenesisSponsor)
+  : undefined) as Address | undefined;
 export const explorerUrl = import.meta.env.VITE_EXPLORER_URL ?? selectedChain.blockExplorers.default.url;
 const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID?.trim();
 export const walletConnectEnabled = Boolean(walletConnectProjectId);
