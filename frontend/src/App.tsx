@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
-import { isAddress, zeroAddress, type Address } from "viem";
-import { useAccount, useBalance, useChainId, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress, type Address } from "viem";
+import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
 import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
@@ -21,11 +21,11 @@ const fade = { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, ex
 
 export default function App() {
   const { view, setView } = useUi();
-  const { address, isConnected } = useAccount();
-  const currentChain = useChainId();
+  const { address, isConnected, chainId: connectedChainId } = useAccount();
+  const currentChain = connectedChainId ?? requiredChainId;
   const { switchChain } = useSwitchChain();
 
-  const base = protocolAddress ? { address: protocolAddress, abi: protocolAbi } : undefined;
+  const base = protocolAddress ? { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId } : undefined;
   const reads = useReadContracts({
     allowFailure: true,
     contracts: base ? [
@@ -43,7 +43,7 @@ export default function App() {
   const token = reads.data?.[3]?.result as Address | undefined;
   const invariant = reads.data?.[4]?.result as boolean | undefined;
   const participantRead = useReadContract({
-    ...(base ?? { address: zeroAddress, abi: protocolAbi }),
+    ...(base ?? { address: zeroAddress, abi: protocolAbi, chainId: requiredChainId }),
     functionName: "getParticipant",
     args: [address ?? zeroAddress],
     query: { enabled: configured && Boolean(address), refetchInterval: 12_000 },
@@ -172,15 +172,20 @@ function Receipt() {
 
 function Participate({ address, currentChain, token, ticket, registered, refresh }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
   const { connector } = useAccount();
+  const { switchChain } = useSwitchChain();
   const refFromUrl = new URLSearchParams(location.search).get("ref") ?? "";
   const [sponsor, setSponsor] = useState(refFromUrl || genesisSponsor || "");
   const [assetStatus, setAssetStatus] = useState<"idle" | "adding" | "added" | "unsupported">("idle");
-  const { data: allowance, refetch: refetchAllowance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, protocolAddress ?? zeroAddress], query: { enabled: Boolean(token && address && protocolAddress) } });
-  const { data: balance, refetch: refetchBalance } = useReadContract({ address: token ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], query: { enabled: Boolean(token && address), refetchInterval: 4_000 } });
+  const [walletProviderBalance, setWalletProviderBalance] = useState<bigint>();
+  const paymentToken = token ?? (requiredChainId === 97 ? testTokenAddress : undefined);
+  const effectiveTicket = ticket ?? (requiredChainId === 97 ? 25_000_000n : undefined);
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({ address: paymentToken ?? zeroAddress, abi: erc20Abi, functionName: "allowance", args: [address ?? zeroAddress, protocolAddress ?? zeroAddress], chainId: requiredChainId, query: { enabled: Boolean(paymentToken && address && protocolAddress) } });
+  const balanceToken = paymentToken;
+  const { data: balance, refetch: refetchBalance } = useReadContract({ address: balanceToken ?? zeroAddress, abi: erc20Abi, functionName: "balanceOf", args: [address ?? zeroAddress], chainId: 97, query: { enabled: Boolean(balanceToken && address), refetchInterval: 2_000, staleTime: 0 } });
   const { data: gasBalance } = useBalance({ address, query: { enabled: Boolean(address) && currentChain === 97 } });
   const sponsorAddressValid = isAddress(sponsor) && sponsor.toLowerCase() !== address?.toLowerCase();
   const sponsorRead = useReadContract({
-    ...(protocolAddress ? { address: protocolAddress, abi: protocolAbi } : { address: zeroAddress, abi: protocolAbi }),
+    ...(protocolAddress ? { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId } : { address: zeroAddress, abi: protocolAbi, chainId: requiredChainId }),
     functionName: "getParticipant",
     args: [sponsorAddressValid ? sponsor as Address : zeroAddress],
     query: { enabled: configured && sponsorAddressValid, retry: 2 },
@@ -189,18 +194,43 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
   const mintReceipt = useWaitForTransactionReceipt({ hash: mint.data });
   const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data });
   const registerReceipt = useWaitForTransactionReceipt({ hash: register.data });
-  const approved = ticket !== undefined && allowance !== undefined && allowance >= ticket;
-  useEffect(() => { if (mintReceipt.isSuccess) refetchBalance(); }, [mintReceipt.isSuccess, refetchBalance]);
+  const approved = effectiveTicket !== undefined && allowance !== undefined && allowance >= effectiveTicket;
+  useEffect(() => { setWalletProviderBalance(undefined); }, [address]);
+  useEffect(() => {
+    if (!mintReceipt.isSuccess || !connector || !address || !balanceToken) return;
+    let active = true;
+    const verifyWalletBalance = async () => {
+      try {
+        const provider = await connector.getProvider() as { request?: (request: { method: string; params?: unknown }) => Promise<unknown> };
+        if (!provider.request) return;
+        const result = await provider.request({
+          method: "eth_call",
+          params: [{ to: balanceToken, data: encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [address] }) }, "latest"],
+        });
+        if (active && typeof result === "string") {
+          setWalletProviderBalance(decodeFunctionResult({ abi: erc20Abi, functionName: "balanceOf", data: result as `0x${string}` }) as bigint);
+        }
+      } catch {
+        // The public-chain read continues polling if this wallet does not support eth_call.
+      }
+    };
+    void refetchBalance();
+    void verifyWalletBalance();
+    const retry = window.setTimeout(() => { void refetchBalance(); void verifyWalletBalance(); }, 3_000);
+    return () => { active = false; window.clearTimeout(retry); };
+  }, [mintReceipt.isSuccess, mintReceipt.data?.transactionHash, connector, address, balanceToken, refetchBalance]);
   useEffect(() => { if (approveReceipt.isSuccess) refetchAllowance(); }, [approveReceipt.isSuccess, refetchAllowance]);
   useEffect(() => { if (registerReceipt.isSuccess) refresh(); }, [registerReceipt.isSuccess, refresh]);
-  const validSponsor = sponsorAddressValid && Boolean(sponsorRead.data && sponsorRead.data.id > 0n);
-  const hasBalance = ticket !== undefined && balance !== undefined && balance >= ticket;
+  const isConfiguredGenesis = requiredChainId === 97 && Boolean(genesisSponsor) && sponsor.toLowerCase() === genesisSponsor?.toLowerCase();
+  const validSponsor = sponsorAddressValid && (isConfiguredGenesis || Boolean(sponsorRead.data && sponsorRead.data.id > 0n));
+  const displayedBalance = walletProviderBalance ?? balance;
+  const hasBalance = effectiveTicket !== undefined && displayedBalance !== undefined && displayedBalance >= effectiveTicket;
   const busy = mint.isPending || mintReceipt.isLoading || approve.isPending || approveReceipt.isLoading || register.isPending || registerReceipt.isLoading;
   const showTestFaucet = requiredChainId === 97 && Boolean(testTokenAddress);
-  const testTokenMatches = Boolean(token && testTokenAddress && token.toLowerCase() === testTokenAddress.toLowerCase());
-  const testTokenCompatible = !token || testTokenMatches;
+  const testTokenMatches = Boolean(paymentToken && testTokenAddress && paymentToken.toLowerCase() === testTokenAddress.toLowerCase());
+  const testTokenCompatible = !paymentToken || testTokenMatches;
   const needsTestBnb = gasBalance?.value === 0n;
-  const canMintTestToken = Boolean(address) && currentChain === 97 && testTokenCompatible && !needsTestBnb;
+  const canUseTestFundsButton = Boolean(address) && testTokenCompatible && !busy;
   const mintButtonLabel = mintReceipt.isLoading
     ? "Minting…"
     : mintReceipt.isSuccess
@@ -214,13 +244,32 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
           : !testTokenCompatible
               ? "Test token unavailable"
               : "Mint test USDT";
+  const handleTestFunds = () => {
+    if (!address || busy || !testTokenCompatible) return;
+    if (currentChain !== 97) {
+      switchChain({ chainId: 97 });
+      return;
+    }
+    if (needsTestBnb) {
+      window.open("https://www.bnbchain.org/en/testnet-faucet", "_blank", "noopener,noreferrer");
+      return;
+    }
+    mint.reset();
+    mint.writeContract({ address: testTokenAddress!, abi: mockUsdtAbi, functionName: "mint", args: [address, 1_000_000_000n], chainId: 97 });
+  };
   const mintErrorMessage = mint.error && (/insufficient funds|gas required exceeds allowance/i.test(mint.error.message)
     ? "Your wallet needs BSC Testnet BNB to pay the mint transaction fee. Get free test BNB from the faucet below, then try again."
+    : /current chain.*does not match|chain mismatch/i.test(mint.error.message)
+      ? "Your wallet is on the wrong network. Switch it to BNB Smart Chain Testnet (chain ID 97), then mint again."
     : /user rejected|user denied/i.test(mint.error.message)
       ? "The mint transaction was cancelled in your wallet."
       : mint.error.message.split("\n")[0]);
   const transactionError = mintErrorMessage ?? (approve.error && (/user rejected|user denied/i.test(approve.error.message)
     ? "The approval was cancelled in your wallet."
+    : /current chain.*does not match|chain mismatch/i.test(approve.error.message)
+      ? "Your wallet is on the wrong network. Switch it to BNB Smart Chain Testnet (chain ID 97), then approve again."
+    : /undefined.*invalid|address.*undefined/i.test(approve.error.message)
+      ? "The protocol or USDT contract address is unavailable. Refresh the page before approving."
     : approve.error.message.split("\n")[0])) ?? (register.error && (/AlreadyRegistered/i.test(register.error.message)
       ? "This wallet is already registered."
       : /SponsorNotRegistered/i.test(register.error.message)
@@ -231,6 +280,8 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
             ? "The USDT approval is missing or expired. Approve 25 USDT again."
             : /user rejected|user denied/i.test(register.error.message)
               ? "Registration was cancelled in your wallet."
+              : /current chain.*does not match|chain mismatch/i.test(register.error.message)
+                ? "Your wallet is on the wrong network. Switch it to BNB Smart Chain Testnet (chain ID 97), then register again."
               : register.error.message.split("\n")[0]));
   const addTokenToWallet = async () => {
     if (!connector || !testTokenAddress) return;
@@ -257,10 +308,11 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
           {showTestFaucet && <div className="test-funds">
             <div><small>BSC TESTNET FAUCET</small><b>Get test USDT first</b><span>Mint 1,000 MockUSDT directly to your connected wallet. These testing tokens have no real value.</span></div>
             <div className="test-funds-actions">
-              <button className="pill" disabled={!canMintTestToken || busy} onClick={() => mint.writeContract({ address: testTokenAddress!, abi: mockUsdtAbi, functionName: "mint", args: [address!, 1_000_000_000n], chainId: 97 })}>{mintButtonLabel}</button>
+              <button className="pill" disabled={!canUseTestFundsButton} onClick={handleTestFunds}>{mintButtonLabel}</button>
               {address && <button className="token-link" disabled={assetStatus === "adding"} onClick={addTokenToWallet}>{assetStatus === "adding" ? "Opening wallet…" : assetStatus === "added" ? "USDT added to wallet" : "Add USDT to wallet"}</button>}
               <a href="https://www.bnbchain.org/en/testnet-faucet" target="_blank" rel="noreferrer">Get test BNB for gas <ExternalLink size={11}/></a>
             </div>
+            {address && currentChain === 97 && needsTestBnb && <p className="test-funds-warning">Minting is an on-chain transaction. Click the button to get test BNB for gas, then mint again.</p>}
             <div className="test-token-details">
               <span>MockUSDT contract</span>
               <a href={`${explorerUrl}/token/${testTokenAddress}`} target="_blank" rel="noreferrer">{testTokenAddress} <ExternalLink size={11}/></a>
@@ -272,13 +324,17 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
           {!refFromUrl && genesisSponsor && sponsor.toLowerCase() === genesisSponsor.toLowerCase() && <p className="default-sponsor">Using the verified genesis sponsor for this testnet deployment.</p>}
           <p className={`hint ${validSponsor ? "ok" : ""}`}>{validSponsor && <Check size={14}/>} {sponsorMessage}</p>
           <hr/>
-          <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(ticket) === "—" ? "25" : formatToken(ticket)} USDT. Not a cent more.</p></div></div>
-          <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(balance)} USDT</b></li>}</ul>
+          <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(effectiveTicket) === "—" ? "25" : formatToken(effectiveTicket)} USDT. Not a cent more.</p></div></div>
+          <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(displayedBalance)} USDT</b></li>}</ul>
           {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done"><Check size={18}/><div><b>You're already registered.</b><span>This wallet holds a place in the sponsor graph.</span></div></div> : <div className="stack">
-            {!approved && <button className="pill wide" disabled={!token || !ticket || !hasBalance || busy || currentChain !== requiredChainId} onClick={() => approve.writeContract({ address: token!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, ticket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming approval…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : hasBalance ? "Approve 25 USDT" : "Get test USDT first"}</button>}
-            <button className="pill wide" disabled={!approved || !hasBalance || !validSponsor || busy || currentChain !== requiredChainId} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address], chainId: requiredChainId })}>{registerReceipt.isLoading ? "Registering on-chain…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : !hasBalance ? "Get test USDT first" : approved ? "Confirm participation" : "Approval comes first"}</button>
+            {!approved && <button className="pill wide" disabled={!protocolAddress || !paymentToken || !effectiveTicket || !hasBalance || busy || currentChain !== requiredChainId} onClick={() => approve.writeContract({ address: paymentToken!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, effectiveTicket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming approval…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : hasBalance ? "Approve 25 USDT" : "Get test USDT first"}</button>}
+            <div className="registration-action">
+              <small>FINAL STEP · REGISTRATION</small>
+              <button className="pill wide register-button" disabled={!protocolAddress || !approved || !hasBalance || !validSponsor || busy || currentChain !== requiredChainId} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address], chainId: requiredChainId })}>{registerReceipt.isLoading ? "Registering wallet on-chain…" : currentChain !== requiredChainId ? "Register wallet — switch to BSC Testnet" : !hasBalance ? "Register wallet — get test USDT first" : !validSponsor ? "Register wallet — valid sponsor required" : approved ? "Register wallet" : "Register wallet — approve USDT first"}</button>
+            </div>
           </div>}
           {transactionError && <p className="error">{transactionError}</p>}
+          {mintReceipt.isSuccess && address && displayedBalance !== undefined && <p className="mint-confirmed"><Check size={14}/> Mint confirmed for {shortAddress(address)}. On-chain balance: {formatToken(displayedBalance)} USDT.</p>}
           {mintReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${mintReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the mint transaction <ExternalLink size={14}/></a>}
           {registerReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the confirmed transaction <ExternalLink size={14}/></a>}
         </div>
@@ -296,16 +352,16 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
   const account = address ?? zeroAddress;
   const rewards = useReadContracts({
     contracts: protocolAddress ? [
-      { address: protocolAddress, abi: protocolAbi, functionName: "withdrawable", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "teamCount", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "workingLevel", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "nonWorkingLevel", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "starRank", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "matrixParent", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "pendingSingleLegIncome", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "pendingWorkingPoolIncome", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "pendingNonWorkingPoolIncome", args: [account] },
-      { address: protocolAddress, abi: protocolAbi, functionName: "singleLegLevel", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "withdrawable", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "teamCount", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevel", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingLevel", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "starRank", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "matrixParent", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingSingleLegIncome", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingWorkingPoolIncome", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingNonWorkingPoolIncome", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegLevel", args: [account] },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -376,7 +432,7 @@ type SingleLegQuote = readonly [bigint, bigint, bigint, bigint, bigint, bigint];
 function WorkingTree({ address, team, currentLevel }: { address?: Address; team?: bigint; currentLevel?: number }) {
   const quotes = useReadContracts({
     allowFailure: true,
-    contracts: protocolAddress ? Array.from({ length: 8 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, functionName: "workingLevelQuote" as const, args: [index + 1] as const })) : [],
+    contracts: protocolAddress ? Array.from({ length: 8 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevelQuote" as const, args: [index + 1] as const })) : [],
     query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
   });
   const teamValue = Number(team ?? 0n);
@@ -407,7 +463,7 @@ function WorkingTree({ address, team, currentLevel }: { address?: Address; team?
 function SingleLegTree({ address, team, directs, currentLevel }: { address?: Address; team?: bigint; directs?: bigint; currentLevel?: number }) {
   const quotes = useReadContracts({
     allowFailure: true,
-    contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
+    contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
     query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
   });
   const teamValue = Number(team ?? 0n);

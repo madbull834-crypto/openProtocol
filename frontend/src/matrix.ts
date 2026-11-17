@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { type Address } from "viem";
 import { useReadContracts } from "wagmi";
-import { protocolAddress } from "./config";
+import { chainId, protocolAddress } from "./config";
 import { protocolAbi } from "./contracts/abi";
 import { buildTree, nextLevel, type ChildMap } from "./matrix-core";
 
@@ -12,7 +12,7 @@ const key = (a: Address) => a.toLowerCase();
 function useChildren(nodes: Address[]) {
   const read = useReadContracts({
     allowFailure: true,
-    contracts: nodes.map((a) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "getMatrixChildren" as const, args: [a] as const })),
+    contracts: nodes.map((a) => ({ address: protocolAddress!, abi: protocolAbi, chainId, functionName: "getMatrixChildren" as const, args: [a] as const })),
     query: { enabled: Boolean(protocolAddress) && nodes.length > 0, refetchInterval: 12_000, retry: 2 },
   });
   const map = useMemo(() => {
@@ -37,7 +37,7 @@ export function useMatrixTree(root?: Address) {
   const all = useMemo(() => [...level0, ...level1, ...level2, ...level3], [level0, level1, level2, level3]);
   const idsRead = useReadContracts({
     allowFailure: true,
-    contracts: all.map((a) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "getParticipant" as const, args: [a] as const })),
+    contracts: all.map((a) => ({ address: protocolAddress!, abi: protocolAbi, chainId, functionName: "getParticipant" as const, args: [a] as const })),
     query: { enabled: Boolean(protocolAddress) && all.length > 0, refetchInterval: 12_000, retry: 2 },
   });
 
