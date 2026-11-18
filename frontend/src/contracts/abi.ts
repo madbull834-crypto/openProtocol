@@ -10,6 +10,8 @@ export const protocolAbi = [
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "settlePoolRewards", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "withdrawable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "claimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "pendingFiveStarReward", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "matrixParent", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "address" }] },
   { type: "function", name: "getMatrixChildren", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "address[2]" }] },
   { type: "function", name: "teamCount", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },

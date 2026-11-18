@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
@@ -49,10 +49,11 @@ export default function App() {
     query: { enabled: configured && Boolean(address), refetchInterval: 12_000 },
   });
   const participant = participantRead.data;
+  const isRegistered = Boolean(participant && participant.id > 0n);
 
-  const nav = [
-    ["overview", "Overview"], ["participate", "Participate"], ["referrals", "Network"], ["mechanics", "Mechanics"],
-  ] as const;
+  const nav = isRegistered
+    ? [["overview", "Overview"], ["referrals", "Dashboard"], ["mechanics", "Mechanics"]] as const
+    : [["overview", "Overview"], ["participate", "Participate"], ["referrals", "Network"], ["mechanics", "Mechanics"]] as const;
 
   return <div className="shell">
     <header className="globalnav">
@@ -76,10 +77,11 @@ export default function App() {
           currentChain={currentChain}
           token={token}
           ticket={ticket}
-          registered={Boolean(participant && participant.id > 0n)}
+          registered={isRegistered}
           refresh={() => { reads.refetch(); participantRead.refetch(); }}
+          onOpenDashboard={() => setView("referrals")}
         />}
-        {view === "referrals" && <Referrals key="referrals" address={address} participant={participant}/>}
+        {view === "referrals" && <Referrals key="referrals" address={address} participant={participant} onParticipate={() => setView("participate")}/>}
         {view === "mechanics" && <Mechanics key="mechanics"/>}
       </AnimatePresence>
     </main>
@@ -170,7 +172,7 @@ function Receipt() {
   </div>;
 }
 
-function Participate({ address, currentChain, token, ticket, registered, refresh }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void }) {
+function Participate({ address, currentChain, token, ticket, registered, refresh, onOpenDashboard }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void; onOpenDashboard: () => void }) {
   const { connector } = useAccount();
   const { switchChain } = useSwitchChain();
   const refFromUrl = new URLSearchParams(location.search).get("ref") ?? "";
@@ -194,6 +196,7 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
   const mintReceipt = useWaitForTransactionReceipt({ hash: mint.data });
   const approveReceipt = useWaitForTransactionReceipt({ hash: approve.data });
   const registerReceipt = useWaitForTransactionReceipt({ hash: register.data });
+  const registrationHandled = useRef(false);
   const approved = effectiveTicket !== undefined && allowance !== undefined && allowance >= effectiveTicket;
   useEffect(() => { setWalletProviderBalance(undefined); }, [address]);
   useEffect(() => {
@@ -220,7 +223,12 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
     return () => { active = false; window.clearTimeout(retry); };
   }, [mintReceipt.isSuccess, mintReceipt.data?.transactionHash, connector, address, balanceToken, refetchBalance]);
   useEffect(() => { if (approveReceipt.isSuccess) refetchAllowance(); }, [approveReceipt.isSuccess, refetchAllowance]);
-  useEffect(() => { if (registerReceipt.isSuccess) refresh(); }, [registerReceipt.isSuccess, refresh]);
+  useEffect(() => {
+    if (!registerReceipt.isSuccess || registrationHandled.current) return;
+    registrationHandled.current = true;
+    refresh();
+    onOpenDashboard();
+  }, [registerReceipt.isSuccess, refresh, onOpenDashboard]);
   const isConfiguredGenesis = requiredChainId === 97 && Boolean(genesisSponsor) && sponsor.toLowerCase() === genesisSponsor?.toLowerCase();
   const validSponsor = sponsorAddressValid && (isConfiguredGenesis || Boolean(sponsorRead.data && sponsorRead.data.id > 0n));
   const displayedBalance = walletProviderBalance ?? balance;
@@ -326,7 +334,7 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
           <hr/>
           <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(effectiveTicket) === "—" ? "25" : formatToken(effectiveTicket)} USDT. Not a cent more.</p></div></div>
           <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(displayedBalance)} USDT</b></li>}</ul>
-          {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done"><Check size={18}/><div><b>You're already registered.</b><span>This wallet holds a place in the sponsor graph.</span></div></div> : <div className="stack">
+          {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done registered-done"><Check size={18}/><div><b>You're already registered.</b><span>Your member dashboard is ready.</span></div><button className="pill" onClick={onOpenDashboard}>Open dashboard</button></div> : <div className="stack">
             {!approved && <button className="pill wide" disabled={!protocolAddress || !paymentToken || !effectiveTicket || !hasBalance || busy || currentChain !== requiredChainId} onClick={() => approve.writeContract({ address: paymentToken!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, effectiveTicket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming approval…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : hasBalance ? "Approve 25 USDT" : "Get test USDT first"}</button>}
             <div className="registration-action">
               <small>FINAL STEP · REGISTRATION</small>
@@ -348,7 +356,7 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
   </motion.div>;
 }
 
-function Referrals({ address, participant }: { address?: Address; participant?: { id: bigint; directCount: bigint; sponsor: Address; joinedAt: bigint } }) {
+function Referrals({ address, participant, onParticipate }: { address?: Address; participant?: { id: bigint; directCount: bigint; sponsor: Address; joinedAt: bigint }; onParticipate: () => void }) {
   const account = address ?? zeroAddress;
   const rewards = useReadContracts({
     contracts: protocolAddress ? [
@@ -362,6 +370,8 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingWorkingPoolIncome", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingNonWorkingPoolIncome", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegLevel", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "claimable", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingFiveStarReward", args: [account] },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -376,27 +386,86 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
   const nonWorking = rewards.data?.[3]?.result as number | undefined;
   const rank = rewards.data?.[4]?.result as number | undefined;
   const placement = rewards.data?.[5]?.result as Address | undefined;
-  const queued = ([6, 7, 8] as const).reduce((sum, index) => sum + ((rewards.data?.[index]?.result as bigint | undefined) ?? 0n), 0n);
+  const pendingSingleLeg = rewards.data?.[6]?.result as bigint | undefined;
+  const pendingWorking = rewards.data?.[7]?.result as bigint | undefined;
+  const pendingNonWorking = rewards.data?.[8]?.result as bigint | undefined;
+  const queued = (pendingSingleLeg ?? 0n) + (pendingWorking ?? 0n) + (pendingNonWorking ?? 0n);
   const singleLeg = rewards.data?.[9]?.result as number | undefined;
+  const creditedIncome = rewards.data?.[10]?.result as bigint | undefined;
+  const pendingFiveStar = rewards.data?.[11]?.result as bigint | undefined;
   const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "Connect a wallet to create your link";
   const joined = participant?.joinedAt ? new Date(Number(participant.joinedAt) * 1000).toLocaleDateString() : "—";
   const [copied, setCopied] = useState(false);
   const [networkView, setNetworkView] = useState<"matrix" | "working" | "single">("matrix");
   const copy = () => { navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1600); };
+  const registered = Boolean(participant?.id);
+  const directCount = Number(participant?.directCount ?? 0n);
+  const teamCount = Number(team ?? 0n);
+  const currentRank = rank ?? 0;
+  const rankNames = ["Member", "1 Star", "2 Star", "3 Star", "4 Star", "5 Star"];
+  const directRequirements = [0, 4, 8, 12, 16, 16];
+  const teamRequirements = [0, 0, 16, 64, 300, 1_000];
+  const nextRank = Math.min(5, currentRank + 1);
+  const directProgress = directRequirements[nextRank] ? directCount / directRequirements[nextRank] * 100 : 100;
+  const teamProgress = teamRequirements[nextRank] ? teamCount / teamRequirements[nextRank] * 100 : 100;
+  const rankProgress = currentRank >= 5 ? 100 : Math.min(100, directProgress, teamProgress);
 
   return <motion.div {...fade}>
-    <section className="page-hero"><div className="wrap center"><p className="eyebrow">Network</p><h1>Your place.<br/><span className="grad">On the record.</span></h1><p className="sub">Sponsorship is permanent. Placement follows the global breadth-first matrix, never anyone's discretion.</p></div></section>
-    <section className="band gray">
-      <div className="wrap-wide bento">
-        <div className="tile tile-wide">
-          <small className="label">Your invitation</small>
-          <div className="copy-row"><code>{link}</code><button disabled={!address} onClick={copy} aria-label="Copy link">{copied ? <Check size={16}/> : <Copy size={16}/>}</button></div>
-          <p>Anyone who follows this link will have your wallet entered as their sponsor. It promises neither placement nor income.</p>
+    <section className="dashboard-hero">
+      <div className="wrap-wide dashboard-hero-inner">
+        <div><p className="eyebrow">Member dashboard</p><h1>{registered ? <>Welcome back.<br/><span className="grad">Your network at a glance.</span></> : <>Your dashboard.<br/><span className="grad">Starts after registration.</span></>}</h1><p className="sub">{registered ? `Member No. ${participant!.id.toString()} · Joined ${joined}` : "Connect and register your wallet to unlock live membership, rewards, referrals and progression."}</p></div>
+        <div className={`member-status ${registered ? "active" : "inactive"}`}><i/><div><small>MEMBERSHIP STATUS</small><b>{registered ? "Active on BSC Testnet" : "Not registered"}</b><span>{address ? shortAddress(address) : "Wallet not connected"}</span></div></div>
+      </div>
+    </section>
+    <section className="band gray dashboard-band">
+      <div className="wrap-wide">
+        {!registered && <div className="dashboard-onboarding"><div><small>ONE STEP AWAY</small><h3>Register to unlock your member dashboard.</h3><p>Your dashboard brings your membership, invite link, network progression and rewards into one place.</p></div><button className="pill" onClick={onParticipate}>Start registration <ChevronRight size={17}/></button></div>}
+
+        <div className="dashboard-metrics" aria-label="Membership overview">
+          <article className="metric-card primary"><small>Claimable rewards</small><b>{formatToken(withdrawable)} <em>USDT</em></b><span>{withdrawable && withdrawable > 0n ? "Ready to claim" : "Nothing available yet"}</span></article>
+          <article className="metric-card"><small>Direct referrals</small><b>{registered ? directCount : "—"}</b><span>{registered ? `${Math.max(0, 4 - directCount)} until 1 Star` : "Register to invite"}</span></article>
+          <article className="metric-card"><small>Total team</small><b>{registered ? teamCount : "—"}</b><span>Across your sponsor network</span></article>
+          <article className="metric-card"><small>Current rank</small><b>{registered ? rankNames[currentRank] : "—"}</b><span>{currentRank >= 5 ? "Highest rank reached" : `Next: ${rankNames[nextRank]}`}</span></article>
         </div>
-        <div className="tile"><small className="label">Member</small><b className="tile-num">{participant?.id ? `No. ${participant.id.toString()}` : "—"}</b><p>{participant?.id ? `Joined ${joined}` : "Not registered"}</p></div>
-        <div className="tile"><small className="label">Direct referrals</small><b className="tile-num">{participant?.directCount?.toString() ?? "—"}</b><p>Members who named you as sponsor.</p></div>
-        <div className="tile"><small className="label">Sponsor</small><b className="tile-num mono">{!participant?.id ? "—" : participant.sponsor === zeroAddress ? "Genesis" : shortAddress(participant.sponsor)}</b><p>Recorded once. Never changes.</p></div>
-        <div className="tile tile-dark tile-wide rewards">
+
+        <div className="dashboard-quick-grid">
+          <div className="tile invite-card">
+            <div className="tile-heading"><div><small className="label">Invite people</small><h3>Your personal referral link</h3></div><span className="status-chip">Permanent sponsor link</span></div>
+            <div className="copy-row"><code>{link}</code><button disabled={!address || !registered} onClick={copy} aria-label="Copy referral link">{copied ? <Check size={16}/> : <Copy size={16}/>}</button></div>
+            <p>Share this link only with people who understand this is a testnet prototype. Registration records you as their sponsor.</p>
+          </div>
+          <div className="tile rank-card">
+            <div className="tile-heading"><div><small className="label">Progress</small><h3>{currentRank >= 5 ? "Top rank achieved" : `${rankNames[nextRank]} requirements`}</h3></div><b>{Math.round(rankProgress)}%</b></div>
+            <div className="rank-progress"><i style={{ width: `${rankProgress}%` }}/></div>
+            <div className="rank-requirements"><span><b>{directCount}</b> / {directRequirements[nextRank]} directs</span><span><b>{teamCount}</b> / {teamRequirements[nextRank]} team</span></div>
+            <p>{currentRank >= 5 ? "Your five-star achievement weight continues with team growth." : "Both requirements must be reached before the contract advances your rank."}</p>
+          </div>
+        </div>
+
+        <div className="tile income-panel">
+          <div className="section-heading"><div><small className="label">All income</small><h3>Every reward stream in one place</h3></div><span>Live contract balances</span></div>
+          <div className="income-summary">
+            <div><small>Available now</small><b>{formatToken(creditedIncome)} <em>USDT</em></b><span>Credited income ready to claim</span></div>
+            <div><small>Pool income queued</small><b>{formatToken(queued)} <em>USDT</em></b><span>Settle pools to make it claimable</span></div>
+            <div><small>Five-Star pending</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>Included in the withdrawable total</span></div>
+          </div>
+          <div className="income-grid">
+            <IncomeCard title="Direct income" description="Rewards from eligible direct referrals."/>
+            <IncomeCard title="Ten-level upline" description="Upline rewards distributed across ten levels."/>
+            <IncomeCard title="Global Matrix" description="Income generated by binary matrix placement."/>
+            <IncomeCard title="Non-working upline" description="U1 and eligible non-working upline rewards."/>
+            <IncomeCard title="Weekly Superstar" description="Weekly rewards for qualified performers."/>
+            <IncomeCard title="Re-entry income" description="Rewards created by completed pool re-entries."/>
+            <IncomeCard title="Single-Leg Pool" description="Income waiting in your Single-Leg pool." value={pendingSingleLeg}/>
+            <IncomeCard title="Working Pool" description="Income waiting in your Working Pool." value={pendingWorking}/>
+            <IncomeCard title="Non-Working Pool" description="Income waiting in your Non-Working Pool." value={pendingNonWorking}/>
+            <IncomeCard title="Five-Star Royalty" description="Your pending share of the Five-Star club." value={pendingFiveStar}/>
+          </div>
+          <p className="income-note">The contract stores Direct, Upline, Matrix, Superstar and Re-entry rewards together in the available balance. Exact lifetime totals for those individual categories require indexing RewardCredited events.</p>
+        </div>
+
+        <div className="tile tile-dark rewards dashboard-rewards">
+          <div className="section-heading"><div><small className="label">Rewards & progression</small><h3>Your on-chain position</h3></div><span>Updates every 12 seconds</span></div>
           <div className="rewards-grid">
             <div><small className="label">Claimable</small><b className="tile-num">{formatToken(withdrawable)} <em>USDT</em></b></div>
             <div><small className="label">Awaiting settlement</small><b className="tile-num">{formatToken(queued)} <em>USDT</em></b></div>
@@ -406,11 +475,11 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
             <div><small className="label">Matrix parent</small><b className="tile-num mono">{placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b></div>
           </div>
           <div className="stack row">
-            <button className="pill ghost" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards" })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button>
-            <button className="pill" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim" })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"}</button>
+            <button className="pill ghost" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards", chainId: requiredChainId })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button>
+            <button className="pill" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim", chainId: requiredChainId })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"}</button>
           </div>
         </div>
-        <div className="tile tile-wide matrix">
+        <div className="tile matrix dashboard-network">
           <div className="network-intro"><small className="label">Your network, explained</small><h3>Three systems. Three different jobs.</h3><p>Choose a view to see where you are placed, how your Working Pool advances, or what your next Single-Leg milestone requires.</p></div>
           <div className="system-switcher" role="tablist" aria-label="Network system">
             <button className={networkView === "matrix" ? "active" : ""} onClick={() => setNetworkView("matrix")}><small>01</small><b>Global Matrix</b><span>Where you are placed</span></button>
@@ -424,6 +493,16 @@ function Referrals({ address, participant }: { address?: Address; participant?: 
       </div>
     </section>
   </motion.div>;
+}
+
+function IncomeCard({ title, description, value }: { title: string; description: string; value?: bigint }) {
+  const exact = value !== undefined;
+  return <article className="income-card">
+    <div><small>{exact ? "LIVE BALANCE" : "CREDITED"}</small><span className={exact ? "income-live" : "income-aggregate"}>{exact ? "Tracked separately" : "Combined balance"}</span></div>
+    <h4>{title}</h4>
+    <b>{exact ? <>{formatToken(value)} <em>USDT</em></> : <>Included <em>IN AVAILABLE</em></>}</b>
+    <p>{description}</p>
+  </article>;
 }
 
 type WorkingQuote = readonly [bigint, bigint, bigint, bigint, bigint];
