@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { Check, ChevronRight, Copy, ExternalLink } from "lucide-react";
+import { ArrowUpRight, Check, ChevronRight, Coins, Copy, ExternalLink, ShieldCheck, Sparkles, UserRoundCheck, WalletCards } from "lucide-react";
 import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress, type Address } from "viem";
 import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
@@ -97,79 +97,67 @@ export default function App() {
 
 function Overview({ memberCount, total, ticket, invariant, onParticipate, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; onParticipate: () => void; onMechanics: () => void }) {
   return <motion.div {...fade}>
-    <section className="hero">
-      <div className="wrap center">
-        <p className="eyebrow">Open Protocol</p>
-        <h1>Every dollar.<br/><span className="grad">Accounted for.</span></h1>
-        <p className="sub">A single $25 ticket. Three fixed pools. One contract no one can alter.</p>
-        <div className="links"><button className="textlink" onClick={onParticipate}>Participate <ChevronRight size={18}/></button><button className="textlink" onClick={onMechanics}>Read the mechanics <ChevronRight size={18}/></button></div>
-      </div>
-      <div className="stage"><Receipt/></div>
-    </section>
-
-    <section className="stats">
-      <div className="wrap stats-grid">
-        <div><b>{memberCount?.toLocaleString() ?? "—"}</b><span>Members registered</span></div>
-        <div><b>{total === undefined ? "—" : formatToken(total)}</b><span>USDT participated</span></div>
-        <div><b>{ticket === undefined ? "25" : formatToken(ticket)}</b><span>USDT per ticket</span></div>
-        <div><b>{invariant === undefined ? "—" : invariant ? "Yes" : "No"}</b><span>Ledger reconciled</span></div>
-      </div>
-      {!configured && <p className="wrap center muted small">Live figures appear once the contract is deployed.</p>}
-    </section>
-
-    <section className="band gray" id="allocation">
-      <div className="wrap center">
-        <h2>Where the money goes.</h2>
-        <p className="sub">Three allocations, fixed when the contract was deployed and enforced on every ticket since. No treasury decides. No operator routes. Nothing happens off-chain.</p>
-      </div>
-      <div className="wrap-wide bento">
-        <div className="tile tile-wide">
-          <h3>One ticket. Three destinations.</h3>
-          <div className="bar">{allocation.map(a => <i key={a.name} className={a.tone} style={{ flex: a.value }}/>)}</div>
-          <div className="bar-legend">{allocation.map(a => <span key={a.name}><i className={`dot ${a.tone}`}/>{a.name} <b>${a.value}</b></span>)}</div>
+    <section className="overview-hero">
+      <div className="wrap-wide overview-hero-grid">
+        <div className="overview-copy">
+          <div className="environment-badge"><i/> BSC TESTNET · NO REAL FUNDS</div>
+          <h1>Join Open Protocol<br/><span className="grad">in four clear steps.</span></h1>
+          <p>Connect your wallet, receive free test tokens, confirm your sponsor, then approve and register. The dashboard opens automatically when registration succeeds.</p>
+          <div className="overview-actions"><button className="pill" onClick={onParticipate}>Start registration <ChevronRight size={17}/></button><button className="overview-secondary" onClick={onMechanics}>Review contract rules</button></div>
+          <div className="hero-trust"><span><Check size={13}/> 25 test USDT</span><span><Check size={13}/> Exact contract allowance</span><span><Check size={13}/> No real-value tokens</span></div>
         </div>
-        {allocation.map(a => <div className={`tile tint-${a.tone}`} key={a.name}><i className={`dot big ${a.tone}`}/><b className="tile-num">${a.value}</b><h3>{a.name}</h3><p>{a.note}</p><small>{a.value / 25 * 100}% of each ticket</small></div>)}
-        <div className="tile tile-dark tile-wide glow">
-          <h3>On the ledger.</h3>
-          <dl>
-            <div><dt>Network</dt><dd>BNB Smart Chain {requiredChainId === 56 ? "mainnet" : "testnet"}</dd></div>
-            <div><dt>Settlement</dt><dd>USDT, BEP-20</dd></div>
-            <div><dt>Ticket</dt><dd>25.00 USDT</dd></div>
-            <div><dt>Split</dt><dd>15 + 9 + 1</dd></div>
-            <div><dt>Contract</dt><dd>{protocolAddress ? <a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer" className="mono">{shortAddress(protocolAddress)} <ExternalLink size={12}/></a> : "Awaiting deployment"}</dd></div>
-            <div><dt>Reads</dt><dd>Refreshed every 12 seconds</dd></div>
-          </dl>
+        <div className="start-card">
+          <div className="start-card-head"><div><small>BEFORE YOU START</small><h3>What you need</h3></div><span>~3 minutes</span></div>
+          <ul>
+            <li><span><WalletCards size={17}/></span><div><b>A Web3 wallet</b><p>MetaMask, Trust Wallet, SafePal or another BSC-compatible wallet.</p></div><Check size={15}/></li>
+            <li><span><Coins size={17}/></span><div><b>Free test BNB</b><p>A small amount is needed only for testnet transaction fees.</p></div><Check size={15}/></li>
+            <li><span><UserRoundCheck size={17}/></span><div><b>A registered sponsor</b><p>Use your referral link or the verified testnet sponsor.</p></div><Check size={15}/></li>
+          </ul>
+          <div className="start-total"><span>Registration amount</span><b>{ticket === undefined ? "25.00" : formatToken(ticket)} USDT</b><small>Test tokens only</small></div>
         </div>
       </div>
     </section>
 
-    <section className="band black">
-      <div className="wrap center">
-        <h2>Two confirmations.<br/><span className="grad-cool">That's the whole process.</span></h2>
-        <p className="sub">The contract does the rest, in the order it says it will.</p>
-      </div>
-      <div className="wrap-wide steps">
-        {[["Connect a wallet.", "Any wallet that supports BNB Smart Chain. Set it to the testnet before you begin."], ["Name a sponsor.", "The address of one existing member. The link is recorded once and cannot be edited afterwards."], ["Approve, then register.", "Grant an allowance of exactly 25 USDT and confirm. The three-way split executes in the same transaction."]].map(([t, b], i) => <div className="tile tile-dark" key={t}><span className="step-n">{i + 1}</span><h3>{t}</h3><p>{b}</p></div>)}
+    <section className="overview-proof">
+      <div className="wrap-wide proof-grid">
+        <div><small>REGISTERED MEMBERS</small><b>{memberCount?.toLocaleString() ?? "—"}</b></div>
+        <div><small>TEST USDT PROCESSED</small><b>{total === undefined ? "—" : formatToken(total)}</b></div>
+        <div><small>NETWORK</small><b>BSC Testnet</b></div>
+        <div><small>ACCOUNTING STATUS</small><b className={invariant ? "verified" : ""}>{invariant === undefined ? "Checking" : invariant ? "Reconciled" : "Review required"}</b></div>
       </div>
     </section>
 
-    <section className="band gradient">
-      <div className="wrap center">
-        <h2>Read the contract.<br/>Then decide.</h2>
-        <p className="sub">This is a testnet build for validation. It promises no returns, and the reward rules it runs on are prototypes that still require an independent audit.</p>
-        <div className="links"><button className="pill light" onClick={onParticipate}>Participate</button><button className="textlink light" onClick={onMechanics}>See the documented mechanics <ChevronRight size={18}/></button></div>
+    <section className="simple-flow">
+      <div className="wrap-wide">
+        <div className="overview-section-head"><small>HOW TO JOIN</small><h2>One guided registration.</h2><p>The registration page checks each requirement and shows only the next action you need to take.</p></div>
+        <div className="join-flow">
+          {[
+            { icon: WalletCards, title: "Connect your wallet", copy: "Choose your wallet and switch to BNB Smart Chain Testnet.", tag: "No payment" },
+            { icon: Coins, title: "Get free test tokens", copy: "Get test BNB for gas, then mint MockUSDT directly to your wallet.", tag: "Testnet only" },
+            { icon: UserRoundCheck, title: "Confirm your sponsor", copy: "We verify the sponsor address on-chain before you can continue.", tag: "Permanent link" },
+            { icon: ShieldCheck, title: "Approve and register", copy: "Approve exactly 25 USDT, then confirm registration in your wallet.", tag: "2 confirmations" },
+          ].map(({ icon: Icon, title, copy, tag }, index) => <article key={title}><div className="flow-top"><span><Icon size={19}/></span><small>STEP 0{index + 1}</small></div><h3>{title}</h3><p>{copy}</p><em>{tag}</em>{index < 3 && <i><ChevronRight size={16}/></i>}</article>)}
+        </div>
+        <div className="flow-cta"><div><b>Ready to begin?</b><span>We will guide you through each check.</span></div><button className="pill" onClick={onParticipate}>Open registration <ArrowUpRight size={16}/></button></div>
       </div>
     </section>
+
+    <section className="ticket-explainer" id="allocation">
+      <div className="wrap-wide ticket-layout">
+        <div><small>YOUR 25 USDT</small><h2>A fixed split.<br/>Nothing hidden.</h2><p>The contract divides the registration amount into three documented pools in the same transaction. If the full split cannot complete, registration reverts.</p><button className="overview-secondary" onClick={onMechanics}>See how rewards work <ChevronRight size={15}/></button></div>
+        <div className="split-card"><div className="split-total"><span>REGISTRATION</span><b>25.00 <em>USDT</em></b></div><div className="split-bar">{allocation.map(a => <i key={a.name} className={a.tone} style={{ flex: a.value }}/>)}</div><ul>{allocation.map(a => <li key={a.name}><span><i className={a.tone}/>{a.name}</span><b>{a.value}.00 USDT</b></li>)}</ul><div className="split-check"><Check size={15}/> 15 + 9 + 1 always equals 25 USDT</div></div>
+      </div>
+    </section>
+
+    <section className="after-join">
+      <div className="wrap-wide after-join-grid">
+        <div className="dashboard-preview"><div className="preview-top"><span><i/> MEMBER DASHBOARD</span><small>LIVE ON-CHAIN</small></div><div className="preview-balance"><small>AVAILABLE TO CLAIM</small><b>0.00 <em>USDT</em></b></div><div className="preview-metrics"><span><small>DIRECTS</small><b>0</b></span><span><small>TEAM</small><b>0</b></span><span><small>RANK</small><b>Member</b></span></div></div>
+        <div className="after-copy"><small>AFTER REGISTRATION</small><h2>Your dashboard opens automatically.</h2><p>From one place you can copy your referral link, review all income streams, follow rank progress, see your network and claim available rewards.</p><ul><li><Check size={14}/> Membership status and wallet</li><li><Check size={14}/> Referral and team progress</li><li><Check size={14}/> Income, pool settlement and claims</li><li><Check size={14}/> Matrix and level views</li></ul><button className="pill" onClick={onParticipate}>Join on testnet <ChevronRight size={16}/></button></div>
+      </div>
+    </section>
+
+    <section className="overview-disclaimer"><div className="wrap-wide"><ShieldCheck size={18}/><p><b>Testnet validation build.</b> MockUSDT has no monetary value. The protocol promises no returns and requires an independent audit before production use.</p>{protocolAddress && <a href={`${explorerUrl}/address/${protocolAddress}`} target="_blank" rel="noreferrer">View contract <ExternalLink size={12}/></a>}</div></section>
   </motion.div>;
-}
-
-function Receipt() {
-  return <div className="receipt">
-    <div className="receipt-head"><span>Participation receipt</span><span>Preview</span></div>
-    <div className="receipt-total"><b>$25</b><small>USDT on BNB Smart Chain</small></div>
-    <ul>{allocation.map(a => <li key={a.name}><i className={`dot ${a.tone}`}/><span>{a.name}</span><b>${a.value}.00</b></li>)}</ul>
-    <div className="receipt-foot"><span>Settled by contract</span><b>$25.00</b></div>
-  </div>;
 }
 
 function Participate({ address, currentChain, token, ticket, registered, refresh, onOpenDashboard }: { address?: Address; currentChain: number; token?: Address; ticket?: bigint; registered: boolean; refresh: () => void; onOpenDashboard: () => void }) {
@@ -307,49 +295,49 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
     }
   };
   const sponsorMessage = !sponsorAddressValid ? "Enter a valid address that is not your own wallet." : sponsorRead.isLoading ? "Checking this sponsor on-chain…" : validSponsor ? "Registered sponsor verified on-chain." : "This address is not a registered sponsor.";
+  const onRequiredChain = currentChain === requiredChainId;
+  const readiness = [
+    { label: "Wallet", detail: address ? shortAddress(address) : "Connect", done: Boolean(address && onRequiredChain), icon: WalletCards },
+    { label: "Test funds", detail: hasBalance ? `${formatToken(displayedBalance)} USDT` : "Required", done: hasBalance, icon: Coins },
+    { label: "Sponsor", detail: validSponsor ? "Verified" : "Required", done: validSponsor, icon: UserRoundCheck },
+    { label: "Approval", detail: approved ? "Confirmed" : "Required", done: approved, icon: ShieldCheck },
+  ];
+  const readinessCount = readiness.filter(step => step.done).length;
 
   return <motion.div {...fade}>
-    <section className="page-hero"><div className="wrap center"><p className="eyebrow">Participate</p><h1>Two confirmations.<br/><span className="grad">Nothing else.</span></h1><p className="sub">Approve the allowance, then register. Your funds remain with the contract until rewards are claimed.</p></div></section>
-    <section className="band gray">
-      <div className="wrap-wide two-col">
-        <div className="tile form">
-          {showTestFaucet && <div className="test-funds">
-            <div><small>BSC TESTNET FAUCET</small><b>Get test USDT first</b><span>Mint 1,000 MockUSDT directly to your connected wallet. These testing tokens have no real value.</span></div>
-            <div className="test-funds-actions">
-              <button className="pill" disabled={!canUseTestFundsButton} onClick={handleTestFunds}>{mintButtonLabel}</button>
-              {address && <button className="token-link" disabled={assetStatus === "adding"} onClick={addTokenToWallet}>{assetStatus === "adding" ? "Opening wallet…" : assetStatus === "added" ? "USDT added to wallet" : "Add USDT to wallet"}</button>}
-              <a href="https://www.bnbchain.org/en/testnet-faucet" target="_blank" rel="noreferrer">Get test BNB for gas <ExternalLink size={11}/></a>
-            </div>
-            {address && currentChain === 97 && needsTestBnb && <p className="test-funds-warning">Minting is an on-chain transaction. Click the button to get test BNB for gas, then mint again.</p>}
-            <div className="test-token-details">
-              <span>MockUSDT contract</span>
-              <a href={`${explorerUrl}/token/${testTokenAddress}`} target="_blank" rel="noreferrer">{testTokenAddress} <ExternalLink size={11}/></a>
-              {assetStatus === "unsupported" && <small>Your wallet could not add it automatically. Import this contract address manually as a custom token with 6 decimals.</small>}
-            </div>
-          </div>}
-          <div className="form-step"><span className="step-n">1</span><div><h3>Sponsor.</h3><p>The address of an existing member. This relationship is permanent.</p></div></div>
-          <label>Sponsor wallet address<input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
-          {!refFromUrl && genesisSponsor && sponsor.toLowerCase() === genesisSponsor.toLowerCase() && <p className="default-sponsor">Using the verified genesis sponsor for this testnet deployment.</p>}
+    <section className="join-hero"><div className="wrap-wide join-hero-inner"><div><div className="environment-badge"><i/> BSC TESTNET · SAFE ONBOARDING</div><h1>Become a member.</h1><p>Complete four verified checks, approve exactly 25 test USDT, and open your dashboard.</p></div><div className="join-assurance"><ShieldCheck size={18}/><div><b>Contract-controlled</b><span>No manual payment or custody</span></div></div></div></section>
+    <section className="band gray join-band">
+      <div className="wrap-wide">
+        <div className="registration-progress" aria-label={`${readinessCount} of 4 registration checks complete`}>
+          <div className="progress-heading"><div><small>REGISTRATION READINESS</small><b>{registered ? "Membership active" : `${readinessCount} of 4 checks complete`}</b></div><span>{registered ? "100" : readinessCount * 25}%</span></div>
+          <div className="progress-line"><i style={{ width: `${registered ? 100 : readinessCount * 25}%` }}/></div>
+          <div className="readiness-steps">{readiness.map(({ label, detail, done, icon: Icon }, index) => <div className={done ? "complete" : ""} key={label}><span>{done ? <Check size={14}/> : <Icon size={15}/>}</span><div><small>0{index + 1}</small><b>{label}</b><em>{detail}</em></div></div>)}</div>
+        </div>
+
+        <div className="registration-layout">
+        <div className="tile form premium-form">
+          <div className="form-section-heading"><span>01</span><div><small>SPONSOR</small><h3>Confirm your invitation</h3><p>Your sponsor is recorded permanently when registration completes.</p></div>{validSponsor && <i><Check size={15}/></i>}</div>
+          <label className="premium-input"><span>Sponsor wallet address</span><input value={sponsor} onChange={e => setSponsor(e.target.value.trim())} placeholder="0x…" spellCheck={false}/></label>
+          {!refFromUrl && genesisSponsor && sponsor.toLowerCase() === genesisSponsor.toLowerCase() && <p className="default-sponsor">Verified genesis sponsor selected for this testnet.</p>}
           <p className={`hint ${validSponsor ? "ok" : ""}`}>{validSponsor && <Check size={14}/>} {sponsorMessage}</p>
-          <hr/>
-          <div className="form-step"><span className="step-n">2</span><div><h3>Allowance.</h3><p>Exactly {formatToken(effectiveTicket) === "—" ? "25" : formatToken(effectiveTicket)} USDT. Not a cent more.</p></div></div>
-          <ul className="summary"><li><span>Working pool</span><b>15.00</b></li><li><span>Non-working pool</span><b>9.00</b></li><li><span>Five-star club</span><b>1.00</b></li><li className="total"><span>Total, USDT</span><b>25.00</b></li>{address && <li className={hasBalance ? "wallet-balance ok" : "wallet-balance low"}><span>Your wallet balance</span><b>{formatToken(displayedBalance)} USDT</b></li>}</ul>
-          {!address ? <div className="empty">Connect a wallet to continue.</div> : registered ? <div className="done registered-done"><Check size={18}/><div><b>You're already registered.</b><span>Your member dashboard is ready.</span></div><button className="pill" onClick={onOpenDashboard}>Open dashboard</button></div> : <div className="stack">
-            {!approved && <button className="pill wide" disabled={!protocolAddress || !paymentToken || !effectiveTicket || !hasBalance || busy || currentChain !== requiredChainId} onClick={() => approve.writeContract({ address: paymentToken!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, effectiveTicket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming approval…" : currentChain !== requiredChainId ? "Switch to BSC Testnet first" : hasBalance ? "Approve 25 USDT" : "Get test USDT first"}</button>}
-            <div className="registration-action">
-              <small>FINAL STEP · REGISTRATION</small>
-              <button className="pill wide register-button" disabled={!protocolAddress || !approved || !hasBalance || !validSponsor || busy || currentChain !== requiredChainId} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address], chainId: requiredChainId })}>{registerReceipt.isLoading ? "Registering wallet on-chain…" : currentChain !== requiredChainId ? "Register wallet — switch to BSC Testnet" : !hasBalance ? "Register wallet — get test USDT first" : !validSponsor ? "Register wallet — valid sponsor required" : approved ? "Register wallet" : "Register wallet — approve USDT first"}</button>
-            </div>
-          </div>}
+
+          <div className="form-divider"/>
+          <div className="form-section-heading"><span>02</span><div><small>PARTICIPATION</small><h3>Review the 25 USDT allocation</h3><p>The split is fixed in the contract and settles atomically.</p></div></div>
+          <div className="allocation-review"><div className="allocation-total"><small>TOTAL COMMITMENT</small><b>25.00 <em>USDT</em></b></div><div className="allocation-bar"><i/><i/><i/></div><div className="allocation-items"><span><i className="blue"/>Working pool <b>15</b></span><span><i className="green"/>Non-working <b>9</b></span><span><i className="purple"/>Five-star <b>1</b></span></div>{address && <div className={`balance-row ${hasBalance ? "ok" : "low"}`}><span>Available in wallet</span><b>{formatToken(displayedBalance)} USDT</b></div>}</div>
+
+          {!address ? <div className="next-action"><div><small>NEXT ACTION</small><h4>Connect your wallet</h4><p>Use the secure wallet control to begin the readiness checks.</p></div><ConnectButton label="Connect wallet" accountStatus="address" chainStatus="none" showBalance={false}/></div> : registered ? <div className="done registered-done"><Check size={18}/><div><b>Membership is active.</b><span>Your dashboard and referral tools are ready.</span></div><button className="pill" onClick={onOpenDashboard}>Open dashboard <ArrowUpRight size={15}/></button></div> : !onRequiredChain ? <div className="next-action"><div><small>NEXT ACTION</small><h4>Switch to BSC Testnet</h4><p>Your wallet must use chain ID 97 for every registration transaction.</p></div><button className="pill" onClick={() => switchChain({ chainId: requiredChainId })}>Switch network</button></div> : !hasBalance ? <div className="next-action"><div><small>NEXT ACTION</small><h4>{needsTestBnb ? "Get test BNB for gas" : "Fund your test wallet"}</h4><p>{needsTestBnb ? "One faucet transaction needs a small amount of test BNB." : "Mint 1,000 MockUSDT. Test tokens have no monetary value."}</p></div><button className="pill" disabled={!canUseTestFundsButton} onClick={handleTestFunds}>{mintButtonLabel} <ChevronRight size={15}/></button></div> : !validSponsor ? <div className="next-action waiting"><div><small>NEXT ACTION</small><h4>Verify a sponsor</h4><p>Enter a registered address above to continue.</p></div><span>Waiting for valid address</span></div> : !approved ? <div className="next-action"><div><small>NEXT ACTION</small><h4>Approve exactly 25 USDT</h4><p>This grants the protocol a one-time registration allowance.</p></div><button className="pill" disabled={!protocolAddress || !paymentToken || !effectiveTicket || busy} onClick={() => approve.writeContract({ address: paymentToken!, abi: erc20Abi, functionName: "approve", args: [protocolAddress!, effectiveTicket!], chainId: requiredChainId })}>{approveReceipt.isLoading ? "Confirming…" : "Approve 25 USDT"} <ShieldCheck size={15}/></button></div> : <div className="next-action ready"><div><small>FINAL CONFIRMATION</small><h4>Everything is ready</h4><p>Confirm registration in your wallet. Your dashboard opens automatically.</p></div><button className="pill register-button" disabled={!protocolAddress || busy} onClick={() => register.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "register", args: [sponsor as Address], chainId: requiredChainId })}>{registerReceipt.isLoading ? "Registering…" : "Complete registration"} <Sparkles size={15}/></button></div>}
+
+          {showTestFaucet && address && <details className="test-assets"><summary>Testnet assets and wallet tools <ChevronRight size={14}/></summary><div><button className="token-link" disabled={assetStatus === "adding"} onClick={addTokenToWallet}>{assetStatus === "adding" ? "Opening wallet…" : assetStatus === "added" ? "USDT added to wallet" : "Add MockUSDT to wallet"}</button><a href="https://www.bnbchain.org/en/testnet-faucet" target="_blank" rel="noreferrer">Get test BNB <ExternalLink size={11}/></a><a href={`${explorerUrl}/token/${testTokenAddress}`} target="_blank" rel="noreferrer">View token contract <ExternalLink size={11}/></a></div>{assetStatus === "unsupported" && <p>Import {testTokenAddress} manually with 6 decimals.</p>}</details>}
           {transactionError && <p className="error">{transactionError}</p>}
           {mintReceipt.isSuccess && address && displayedBalance !== undefined && <p className="mint-confirmed"><Check size={14}/> Mint confirmed for {shortAddress(address)}. On-chain balance: {formatToken(displayedBalance)} USDT.</p>}
           {mintReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${mintReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the mint transaction <ExternalLink size={14}/></a>}
           {registerReceipt.data && <a className="textlink" href={`${explorerUrl}/tx/${registerReceipt.data.transactionHash}`} target="_blank" rel="noreferrer">View the confirmed transaction <ExternalLink size={14}/></a>}
         </div>
-        <div className="side">
-          <div className="tile"><small className="label">Your wallet</small><b className="tile-num mono">{shortAddress(address)}</b><p>Your ticket funds the contract-held pools and the reward accounting that sits behind them.</p></div>
-          <div className="tile"><small className="label">Conservation</small><b className="tile-num">15 + 9 + 1 = 25</b><p>If any recipient would receive less than its exact share, the registration reverts in full. Nothing partial ever settles.</p></div>
-          <div className="tile tile-dark"><small className="label">Testnet assumptions apply</small><p>Matrix placement, ranks, rewards and withdrawals run on documented prototype assumptions. They need an independent audit before any production use.</p></div>
+        <aside className="registration-review">
+          <div className="review-card"><small>REGISTRATION REVIEW</small><h3>Your membership</h3><dl><div><dt>Wallet</dt><dd>{shortAddress(address)}</dd></div><div><dt>Network</dt><dd><i className={onRequiredChain ? "online" : ""}/>{onRequiredChain ? "BSC Testnet" : "Wrong network"}</dd></div><div><dt>Sponsor</dt><dd>{validSponsor ? shortAddress(sponsor) : "Not verified"}</dd></div><div><dt>Approval</dt><dd>{approved ? "25 USDT approved" : "Pending"}</dd></div></dl><div className="review-total"><span>Registration total</span><b>25.00 USDT</b></div></div>
+          <div className="trust-card"><ShieldCheck size={20}/><div><b>Transaction protection</b><p>The contract requires the exact 25 USDT allowance. Registration reverts completely if any rule fails.</p></div></div>
+          <div className="prototype-note"><span>TESTNET PROTOTYPE</span><p>Tokens have no value. Reward mechanics require an independent audit before production use.</p></div>
+        </aside>
         </div>
       </div>
     </section>
@@ -413,8 +401,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   return <motion.div {...fade}>
     <section className="dashboard-hero">
       <div className="wrap-wide dashboard-hero-inner">
-        <div><p className="eyebrow">Member dashboard</p><h1>{registered ? <>Welcome back.<br/><span className="grad">Your network at a glance.</span></> : <>Your dashboard.<br/><span className="grad">Starts after registration.</span></>}</h1><p className="sub">{registered ? `Member No. ${participant!.id.toString()} · Joined ${joined}` : "Connect and register your wallet to unlock live membership, rewards, referrals and progression."}</p></div>
-        <div className={`member-status ${registered ? "active" : "inactive"}`}><i/><div><small>MEMBERSHIP STATUS</small><b>{registered ? "Active on BSC Testnet" : "Not registered"}</b><span>{address ? shortAddress(address) : "Wallet not connected"}</span></div></div>
+        <div className="dashboard-identity"><div className={`member-status ${registered ? "active" : "inactive"}`}><i/><div><small>MEMBERSHIP STATUS</small><b>{registered ? "Active on BSC Testnet" : "Not registered"}</b></div></div><p className="eyebrow">Member dashboard</p><h1>{registered ? <>Welcome back, <span className="grad">Member {participant!.id.toString()}.</span></> : <>Your dashboard <span className="grad">starts here.</span></>}</h1><p className="sub">{registered ? `Joined ${joined} · ${address ? shortAddress(address) : "Wallet not connected"}` : "Connect and register your wallet to unlock live membership, rewards, referrals and progression."}</p></div>
+        <div className="balance-command"><div className="balance-command-top"><span>AVAILABLE TO CLAIM</span><small>LIVE · 12S</small></div><b>{formatToken(withdrawable)} <em>USDT</em></b><p>{queued > 0n ? `${formatToken(queued)} USDT is also waiting for pool settlement.` : "Your credited rewards appear here automatically."}</p><div><button className="pill ghost" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards", chainId: requiredChainId })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button><button className="pill" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim", chainId: requiredChainId })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"} <ArrowUpRight size={15}/></button></div></div>
       </div>
     </section>
     <section className="band gray dashboard-band">
@@ -422,10 +410,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         {!registered && <div className="dashboard-onboarding"><div><small>ONE STEP AWAY</small><h3>Register to unlock your member dashboard.</h3><p>Your dashboard brings your membership, invite link, network progression and rewards into one place.</p></div><button className="pill" onClick={onParticipate}>Start registration <ChevronRight size={17}/></button></div>}
 
         <div className="dashboard-metrics" aria-label="Membership overview">
-          <article className="metric-card primary"><small>Claimable rewards</small><b>{formatToken(withdrawable)} <em>USDT</em></b><span>{withdrawable && withdrawable > 0n ? "Ready to claim" : "Nothing available yet"}</span></article>
-          <article className="metric-card"><small>Direct referrals</small><b>{registered ? directCount : "—"}</b><span>{registered ? `${Math.max(0, 4 - directCount)} until 1 Star` : "Register to invite"}</span></article>
+          <article className="metric-card primary"><small>Direct referrals</small><b>{registered ? directCount : "—"}</b><span>{registered ? `${Math.max(0, 4 - directCount)} until 1 Star` : "Register to invite"}</span></article>
           <article className="metric-card"><small>Total team</small><b>{registered ? teamCount : "—"}</b><span>Across your sponsor network</span></article>
           <article className="metric-card"><small>Current rank</small><b>{registered ? rankNames[currentRank] : "—"}</b><span>{currentRank >= 5 ? "Highest rank reached" : `Next: ${rankNames[nextRank]}`}</span></article>
+          <article className="metric-card"><small>Pool income pending</small><b>{formatToken(queued)} <em>USDT</em></b><span>{queued > 0n ? "Ready to settle" : "No pending pool income"}</span></article>
         </div>
 
         <div className="dashboard-quick-grid">
@@ -473,10 +461,6 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <div><small className="label">Levels</small><b className="tile-num">{working ?? "—"} <em>/</em> {nonWorking ?? "—"}</b></div>
             <div><small className="label">Star rank</small><b className="tile-num">{rank ?? "—"}</b></div>
             <div><small className="label">Matrix parent</small><b className="tile-num mono">{placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b></div>
-          </div>
-          <div className="stack row">
-            <button className="pill ghost" disabled={!address || queued === 0n || settle.isPending || settleReceipt.isLoading} onClick={() => settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards", chainId: requiredChainId })}>{settleReceipt.isLoading ? "Settling…" : "Settle pools"}</button>
-            <button className="pill" disabled={!address || !withdrawable || claim.isPending || claimReceipt.isLoading} onClick={() => claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim", chainId: requiredChainId })}>{claimReceipt.isLoading ? "Claiming…" : "Claim rewards"}</button>
           </div>
         </div>
         <div className="tile matrix dashboard-network">
