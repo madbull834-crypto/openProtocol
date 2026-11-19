@@ -45,3 +45,6 @@ export const wagmiConfig = walletConnectProjectId
       ),
       transports,
     });
+
+/** Base URL of the history API (backend indexer). Empty means same origin, served at /api. */
+export const apiBaseUrl = (import.meta.env.VITE_API_URL?.trim() ?? "").replace(/\/$/, "");

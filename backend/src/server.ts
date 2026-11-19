@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 const app = Fastify({ logger: true });
 const prisma = new PrismaClient();
@@ -23,6 +23,31 @@ app.get<{ Params: { address: string } }>("/api/participants/:address", async (re
 app.get<{ Params: { address: string } }>("/api/participants/:address/referrals", async (request) => {
   const referrals = await prisma.participant.findMany({ where: { sponsor: request.params.address.toLowerCase() }, orderBy: { memberId: "asc" } });
   return referrals.map((item) => ({ ...item, memberId: item.memberId.toString(), blockNumber: item.blockNumber.toString() }));
+});
+
+app.get<{ Params: { address: string } }>("/api/participants/:address/income", async (request, reply) => {
+  const address = request.params.address.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address)) return reply.code(400).send({ error: "Invalid address" });
+  const [byReason, claimTotals, recent, checkpoint] = await Promise.all([
+    prisma.rewardCredit.groupBy({ by: ["reason"], where: { account: address }, _sum: { amount: true }, _count: true }),
+    prisma.claim.aggregate({ where: { account: address }, _sum: { gross: true, net: true, royalty: true, development: true }, _count: true }),
+    prisma.rewardCredit.findMany({ where: { account: address }, orderBy: [{ blockNumber: "desc" }, { logIndex: "desc" }], take: 25 }),
+    prisma.blockCheckpoint.findFirst({ orderBy: { blockNumber: "desc" } }),
+  ]);
+  const str = (value: { toFixed(): string } | null | undefined) => value ? value.toFixed() : "0";
+  return {
+    indexedThrough: checkpoint?.blockNumber.toString() ?? null,
+    totals: Object.fromEntries(byReason.map((row) => [row.reason, { amount: str(row._sum.amount), count: row._count }])),
+    lifetimeCredited: str(byReason.reduce((sum, row) => sum.plus(row._sum.amount ?? 0), new Prisma.Decimal(0))),
+    claims: {
+      count: claimTotals._count,
+      gross: str(claimTotals._sum.gross),
+      net: str(claimTotals._sum.net),
+      royalty: str(claimTotals._sum.royalty),
+      development: str(claimTotals._sum.development),
+    },
+    recent: recent.map((row) => ({ reason: row.reason, amount: row.amount.toFixed(), blockNumber: row.blockNumber.toString(), txHash: row.txHash })),
+  };
 });
 
 const port = Number(process.env.PORT ?? 4000);

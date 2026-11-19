@@ -2,7 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import { createPublicClient, http, zeroAddress } from "viem";
 import { bscTestnet } from "viem/chains";
 import { config } from "./config.js";
-import { batchEnd, finalBlock, participantRegistered, participationAllocated } from "./events.js";
+import { batchEnd, claimed, decodeReason, finalBlock, participantRegistered, participationAllocated, rewardCredited } from "./events.js";
 
 const prisma = new PrismaClient();
 const client = createPublicClient({ chain: bscTestnet, transport: http(config.rpcUrl) });
@@ -17,15 +17,19 @@ async function reconcileReorg() {
     await prisma.$transaction([
       prisma.participant.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
       prisma.allocation.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
+      prisma.rewardCredit.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
+      prisma.claim.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
       prisma.blockCheckpoint.delete({ where: { blockNumber: checkpoint.blockNumber } }),
     ]);
   }
 }
 
 async function processRange(fromBlock: bigint, toBlock: bigint) {
-  const [registrations, allocations, endBlock] = await Promise.all([
+  const [registrations, allocations, credits, claims, endBlock] = await Promise.all([
     client.getLogs({ address: config.protocol, event: participantRegistered, fromBlock, toBlock }),
     client.getLogs({ address: config.protocol, event: participationAllocated, fromBlock, toBlock }),
+    client.getLogs({ address: config.protocol, event: rewardCredited, fromBlock, toBlock }),
+    client.getLogs({ address: config.protocol, event: claimed, fromBlock, toBlock }),
     client.getBlock({ blockNumber: toBlock }),
   ]);
 
@@ -72,6 +76,40 @@ async function processRange(fromBlock: bigint, toBlock: bigint) {
         update: {},
       });
     }
+    for (const log of credits) {
+      const { account, amount, reason } = log.args;
+      if (!account || amount === undefined || !reason || log.logIndex === null) continue;
+      await tx.rewardCredit.upsert({
+        where: { txHash_logIndex: { txHash: log.transactionHash, logIndex: log.logIndex } },
+        create: {
+          account: account.toLowerCase(),
+          amount: new Prisma.Decimal(amount.toString()),
+          reason: decodeReason(reason),
+          blockNumber: log.blockNumber,
+          txHash: log.transactionHash,
+          logIndex: log.logIndex,
+        },
+        update: {},
+      });
+    }
+    for (const log of claims) {
+      const { account, gross, net, royalty, development } = log.args;
+      if (!account || gross === undefined || net === undefined || royalty === undefined || development === undefined || log.logIndex === null) continue;
+      await tx.claim.upsert({
+        where: { txHash_logIndex: { txHash: log.transactionHash, logIndex: log.logIndex } },
+        create: {
+          account: account.toLowerCase(),
+          gross: new Prisma.Decimal(gross.toString()),
+          net: new Prisma.Decimal(net.toString()),
+          royalty: new Prisma.Decimal(royalty.toString()),
+          development: new Prisma.Decimal(development.toString()),
+          blockNumber: log.blockNumber,
+          txHash: log.transactionHash,
+          logIndex: log.logIndex,
+        },
+        update: {},
+      });
+    }
     await tx.blockCheckpoint.upsert({
       where: { blockNumber: toBlock },
       create: { blockNumber: toBlock, blockHash: endBlock.hash },
@@ -93,7 +131,23 @@ export async function syncOnce() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  syncOnce()
-    .then(({ head, indexedThrough }) => console.log(`Indexed through ${indexedThrough} (head ${head})`))
-    .finally(() => prisma.$disconnect());
+  const watch = process.argv.includes("--watch");
+  const intervalMs = Number(process.env.INDEXER_INTERVAL_MS ?? 15_000);
+  const run = async () => {
+    const { head, indexedThrough } = await syncOnce();
+    console.log(`Indexed through ${indexedThrough} (head ${head})`);
+  };
+  if (!watch) {
+    run().finally(() => prisma.$disconnect());
+  } else {
+    let stopped = false;
+    for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { stopped = true; });
+    (async () => {
+      while (!stopped) {
+        await run().catch((error) => console.error("Indexer pass failed, retrying:", error));
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      await prisma.$disconnect();
+    })();
+  }
 }

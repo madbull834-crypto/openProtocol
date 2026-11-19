@@ -42,3 +42,33 @@ model BlockCheckpoint {
   blockHash   String @db.VarChar(66)
   createdAt   DateTime @default(now())
 }
+
+model RewardCredit {
+  id          BigInt   @id @default(autoincrement())
+  account     String   @db.VarChar(42)
+  amount      Decimal  @db.Decimal(78, 0)
+  reason      String   @db.VarChar(66)
+  blockNumber BigInt
+  txHash      String   @db.VarChar(66)
+  logIndex    Int
+  createdAt   DateTime @default(now())
+
+  @@unique([txHash, logIndex])
+  @@index([account, reason])
+}
+
+model Claim {
+  id          BigInt   @id @default(autoincrement())
+  account     String   @db.VarChar(42)
+  gross       Decimal  @db.Decimal(78, 0)
+  net         Decimal  @db.Decimal(78, 0)
+  royalty     Decimal  @db.Decimal(78, 0)
+  development Decimal  @db.Decimal(78, 0)
+  blockNumber BigInt
+  txHash      String   @db.VarChar(66)
+  logIndex    Int
+  createdAt   DateTime @default(now())
+
+  @@unique([txHash, logIndex])
+  @@index([account])
+}

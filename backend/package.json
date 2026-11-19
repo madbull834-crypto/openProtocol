@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "indexer": "tsx src/indexer.ts",
+    "indexer:watch": "tsx src/indexer.ts --watch",
     "build": "prisma generate && tsc",
     "typecheck": "prisma generate && tsc --noEmit",
     "test": "vitest run src",
