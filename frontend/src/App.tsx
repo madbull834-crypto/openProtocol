@@ -59,7 +59,7 @@ export default function App() {
   return <div className="shell">
     <header className="globalnav">
       <div className="globalnav-inner">
-        <button className="wordmark" onClick={() => setView("overview")}>Open Protocol</button>
+        <button className="wordmark" onClick={() => setView("overview")} aria-label="Open Protocol home"><span className="brand-mark"><b>O</b><i>P</i></span><span className="brand-copy"><b>OPEN PROTOCOL</b><small>On-chain membership network</small></span></button>
         <nav>{nav.map(([key, label]) => <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>
         <div className="globalnav-right"><GetTestUsdtButton/><ConnectButton accountStatus="address" chainStatus="none" showBalance={false} label="Connect"/></div>
       </div>
@@ -90,7 +90,7 @@ export default function App() {
     <footer>
       <div className="wrap">
         <p>This is a testnet validation build. It promises no returns and is not ready for mainnet. Read OPEN_QUESTIONS.md before any deployment.</p>
-        <div className="footer-row"><span>Open Protocol</span><span>Immutable core</span><span>BNB Smart Chain</span><span>USDT, BEP-20</span></div>
+        <div className="footer-row"><span className="footer-brand"><i>OP</i> Open Protocol</span><span>Immutable core</span><span>BNB Smart Chain</span><span>USDT, BEP-20</span></div>
       </div>
     </footer>
   </div>;
@@ -154,16 +154,14 @@ function Overview({ memberCount, total, ticket, invariant, registered, onPartici
           <h1>Grow together.<br/><span className="grad">Settled on-chain.</span></h1>
           <p>Open Protocol is a transparent membership network on BNB Smart Chain. One fixed entry, public rules, and every payout enforced by smart contract, with no custody and no hidden fees.</p>
           <div className="home-actions">
-            <button className="pill" onClick={primary.onClick}>{primary.label} <ArrowRight size={17}/></button>
+            <button className="pill" onClick={primary.onClick}>{primary.label}</button>
             <button className="home-ghost" onClick={() => scrollTo("how-it-works")}>How it works</button>
           </div>
           <div className="hero-trust"><span><Check size={13}/> {price} USDT one-time entry</span><span><Check size={13}/> Non-custodial</span><span><Check size={13}/> Open-source contract</span></div>
         </div>
-        <div className="split-card home-hero-card">
-          <div className="split-total"><span>EVERY REGISTRATION</span><b>{price} <em>USDT</em></b></div>
-          <div className="split-bar">{allocation.map(a => <i key={a.name} className={a.tone} style={{ flex: a.value }}/>)}</div>
-          <ul>{allocation.map(a => <li key={a.name}><span><i className={a.tone}/>{a.name}</span><b>{a.value}.00 USDT</b></li>)}</ul>
-          <div className="split-check"><Check size={15}/> Split atomically by the contract</div>
+        <div className="home-orbit-panel" aria-label={`${price} USDT membership allocation`}>
+          <div className="orbit-system"><i className="orbit-line one"/><i className="orbit-line two"/><i className="orbit-node first"/><i className="orbit-node second"/><div className="orbit-core"><span>OP</span><b>{price}</b><small>USDT MEMBERSHIP</small></div></div>
+          <div className="orbit-allocation"><small>CONTRACT ALLOCATION</small><div>{allocation.map(a => <span key={a.name}><i className={a.tone}/><b>{a.value}</b><em>{a.name}</em></span>)}</div><p><ShieldCheck size={14}/> Settled atomically on BNB Chain</p></div>
         </div>
       </div>
     </section>
@@ -216,7 +214,7 @@ function Overview({ memberCount, total, ticket, invariant, registered, onPartici
       <div className="wrap home-final-inner">
         <h2>Ready to join?</h2>
         <p>{registered ? "Your membership is active. Open your dashboard to share your link and track rewards." : "Create your membership on testnet in a few minutes. Test tokens are free."}</p>
-        <button className="pill" onClick={primary.onClick}>{primary.label} <ArrowRight size={17}/></button>
+        <button className="pill" onClick={primary.onClick}>{primary.label}</button>
       </div>
     </section>
 
@@ -463,6 +461,43 @@ function claimFees(gross?: bigint) {
   return { royalty, development, net: value - royalty - development };
 }
 
+const streamIcons: Record<string, typeof Users> = {
+  DIRECT_INCOME: Users, TEN_LEVEL_UPLINE: Layers, MATRIX_INCOME: LayoutGrid, NONWORKING_U1: UserRoundCheck, NONWORKING_UPLINE: Network,
+  REENTRY: Zap, WEEKLY_SUPERSTAR: Award, POOL_LEVEL_INCOME: TrendingUp, FIVE_STAR_ROYALTY: ShieldCheck,
+};
+const streamIcon = (reason: string) => streamIcons[reason] ?? Coins;
+
+const MAX_UINT = 2n ** 256n - 1n;
+type PoolStatus = "empty" | "ready" | "cap" | "reserve";
+
+/**
+ * Mirrors `settlePoolRewards()`: each pool is paid in full or not at all, in the order
+ * Single-Leg → Working → Non-Working, limited by the remaining rank cap and the pool reserve.
+ */
+function previewSettlement(input: { single?: bigint; working?: bigint; nonWorking?: bigint; cap?: bigint; settled?: bigint; workingReserve?: bigint; nonWorkingReserve?: bigint }) {
+  const cap = input.cap ?? 0n;
+  const settled = input.settled ?? 0n;
+  const unlimited = cap === MAX_UINT;
+  let capacity = unlimited ? MAX_UINT : cap > settled ? cap - settled : 0n;
+  let workingReserve = input.workingReserve ?? 0n;
+  const pools = ([["single", input.single], ["working", input.working], ["nonWorking", input.nonWorking]] as const).map(([key, raw]) => {
+    const amount = raw ?? 0n;
+    const reserve = key === "nonWorking" ? input.nonWorkingReserve ?? 0n : workingReserve;
+    let status: PoolStatus = "ready";
+    if (amount === 0n) status = "empty";
+    else if (amount > capacity) status = "cap";
+    else if (amount > reserve) status = "reserve";
+    if (status === "ready") {
+      if (!unlimited) capacity -= amount;
+      if (key !== "nonWorking") workingReserve -= amount;
+    }
+    return { key, amount, status };
+  });
+  const waiting = pools.reduce((sum, p) => sum + p.amount, 0n);
+  const movable = pools.filter(p => p.status === "ready").reduce((sum, p) => sum + p.amount, 0n);
+  return { pools, waiting, movable, settled, cap, unlimited, capLeft: unlimited ? MAX_UINT : cap > settled ? cap - settled : 0n, earned: waiting + settled, loaded: input.cap !== undefined };
+}
+
 function txErrorMessage(error: Error | null, action: string) {
   if (!error) return undefined;
   if (/user rejected|user denied/i.test(error.message)) return `${action} was cancelled in your wallet.`;
@@ -488,6 +523,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "claimable", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingFiveStarReward", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "autoUpgradeCredit", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "poolRewardCap", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "rankedPoolRewardsCredited", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingReserve" },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingReserve" },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -510,6 +549,13 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const creditedIncome = rewards.data?.[10]?.result as bigint | undefined;
   const pendingFiveStar = rewards.data?.[11]?.result as bigint | undefined;
   const heldForUpgrade = rewards.data?.[12]?.result as bigint | undefined;
+  const teamIncome = previewSettlement({
+    single: pendingSingleLeg, working: pendingWorking, nonWorking: pendingNonWorking,
+    cap: rewards.data?.[13]?.result as bigint | undefined,
+    settled: rewards.data?.[14]?.result as bigint | undefined,
+    workingReserve: rewards.data?.[15]?.result as bigint | undefined,
+    nonWorkingReserve: rewards.data?.[16]?.result as bigint | undefined,
+  });
   const history = useIncomeHistory(isMember(participant) ? address : undefined);
   useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) void history.refetch(); }, [claimReceipt.isSuccess, settleReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
   // claimable = everything credited − everything withdrawn, so a shortfall means the indexer started late or is behind.
@@ -565,11 +611,64 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   }
 
   const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network]] as const;
-  const poolRows = [
-    { name: "Single-Leg Pool", note: "Milestone income from team + direct growth", value: pendingSingleLeg, tone: "blue" },
-    { name: "Working Pool", note: "Level income unlocked by team growth", value: pendingWorking, tone: "green" },
-    { name: "Non-Working Pool", note: "Matrix income from your placement", value: pendingNonWorking, tone: "purple" },
-  ];
+  const poolInfo = {
+    single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
+    working: { name: "Working", note: "A new level every 2 team members", tone: "green", Icon: Layers, level: working ?? 0, max: 8 },
+    nonWorking: { name: "Non-Working", note: "A new level every 2 team members", tone: "purple", Icon: Network, level: nonWorking ?? 0, max: 15 },
+  } as const;
+  const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 4);
+  const statusLabel = (status: PoolStatus) => status === "ready" ? "Ready" : status === "cap" ? "Over cap" : status === "reserve" ? "Awaiting reserve" : "Not started";
+  const blockedReason = teamIncome.movable > 0n || teamIncome.waiting === 0n ? undefined
+    : teamIncome.pools.some(p => p.status === "cap")
+      ? `Your ${rankNames[currentRank]} cap allows ${formatToken(teamIncome.capLeft)} USDT more, and each pool is paid out in full or not at all.${nextCapRank > 0 ? ` Reach ${rankNames[nextCapRank]} to raise your cap.` : ""}`
+      : "The pool reserve can't cover this yet. It refills as new members join.";
+  const settleLabel = settle.isPending ? "Confirm in wallet…" : settleReceipt.isLoading ? "Settling…" : teamIncome.movable > 0n ? `Move ${formatToken(teamIncome.movable)} USDT to balance` : "Move to balance";
+  const settleDisabled = teamIncome.movable === 0n || settleBusy;
+  const capPercent = teamIncome.unlimited ? 100 : teamIncome.cap ? Math.min(100, Number(teamIncome.settled * 10_000n / teamIncome.cap) / 100) : 0;
+  const portion = (value: bigint) => teamIncome.earned ? Number(value * 10_000n / teamIncome.earned) / 100 : 0;
+  const ring = 2 * Math.PI * 44;
+  const streamRows = incomeStreams.map(stream => ({ ...stream, amount: historyAmount(stream.reason) ?? 0n, count: history.data?.totals[stream.reason]?.count ?? 0 }));
+  const earnedStreams = streamRows.filter(row => row.amount > 0n).sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0));
+  const idleStreams = streamRows.filter(row => row.amount === 0n);
+  const sourceTotal = earnedStreams.reduce((sum, row) => sum + row.amount, 0n);
+  const teamIncomeCard = <section className="ti">
+    <div className="ti-hero">
+      <div className="ti-headline">
+        <span className="ti-eyebrow"><i/> TEAM INCOME</span>
+        <b className="ti-total">{formatToken(teamIncome.earned)}<em>USDT</em></b>
+        <p>Earned from your team's growth across three pools. {teamIncome.waiting > 0n ? <><b>{formatToken(teamIncome.waiting)} USDT</b> is still in pools.</> : "It appears here as your team grows."}</p>
+        <div className="ti-split" aria-label="Team income breakdown">
+          {teamIncome.pools.map(pool => pool.amount > 0n && <i key={pool.key} className={poolInfo[pool.key].tone} style={{ width: `${portion(pool.amount)}%` }}/>)}
+          {teamIncome.settled > 0n && <i className="settled" style={{ width: `${portion(teamIncome.settled)}%` }}/>}
+        </div>
+        <div className="ti-legend">
+          {teamIncome.pools.map(pool => <span key={pool.key}><i className={poolInfo[pool.key].tone}/>{poolInfo[pool.key].name} <b>{formatToken(pool.amount)}</b></span>)}
+          <span><i className="settled"/>In balance <b>{formatToken(teamIncome.settled)}</b></span>
+        </div>
+      </div>
+      <div className="ti-cap">
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <defs><linearGradient id="tiRing" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#179cff"/><stop offset=".6" stopColor="#32d7ff"/><stop offset="1" stopColor="#f4ba3e"/></linearGradient></defs>
+          <circle cx="50" cy="50" r="44" className="track"/>
+          <circle cx="50" cy="50" r="44" className="value" strokeDasharray={ring} strokeDashoffset={ring * (1 - capPercent / 100)}/>
+        </svg>
+        <div className="ti-cap-text"><small>EARNINGS CAP</small><b>{teamIncome.unlimited ? "∞" : `${Math.round(capPercent)}%`}</b><span>{teamIncome.unlimited ? "No limit" : `${formatToken(teamIncome.settled)} / ${formatToken(teamIncome.cap)}`}</span></div>
+        <span className="ti-rank"><Award size={12}/> {rankNames[currentRank]}</span>
+      </div>
+    </div>
+
+    <div className="ti-pools">{teamIncome.pools.map(pool => { const info = poolInfo[pool.key]; const Icon = info.Icon; return <article key={pool.key} className={`ti-pool ${info.tone} ${pool.amount ? "" : "is-empty"}`}>
+      <div className="ti-pool-head"><span className="ti-icon"><Icon size={16}/></span><div><b>{info.name} Pool</b><small>{info.note}</small></div></div>
+      <div className="ti-amount">{formatToken(pool.amount)}<em>USDT</em></div>
+      <div className="ti-level"><div><span>Level {info.level} of {info.max}</span><span className={`ti-status ${pool.status}`}>{pool.status === "ready" ? <Check size={11}/> : pool.status === "empty" ? null : <Lock size={11}/>} {statusLabel(pool.status)}</span></div><div className="ti-track"><i style={{ width: `${info.level / info.max * 100}%` }}/></div></div>
+    </article>; })}</div>
+
+    <div className={`ti-action ${teamIncome.movable > 0n ? "ready" : blockedReason ? "locked" : ""}`}>
+      <span className="ti-action-icon">{teamIncome.movable > 0n ? <Zap size={17}/> : blockedReason ? <Lock size={17}/> : <Clock size={17}/>}</span>
+      <div><b>{teamIncome.movable > 0n ? `${formatToken(teamIncome.movable)} USDT is ready to move` : blockedReason ? "Team income is locked for now" : "Nothing to move yet"}</b><p>{blockedReason ?? (teamIncome.movable > 0n ? "Move it to your balance, then withdraw to your wallet." : "Your share (80% own, 10% U1, 10% across U2–U9) is added when your team reaches new levels.")}</p></div>
+      <button className="pill" disabled={settleDisabled} onClick={doSettle}>{settleLabel}</button>
+    </div>
+  </section>;
 
   return <motion.div {...fade}>
     <section className="db-head">
@@ -600,8 +699,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <p className="db-balance-sub">{withdrawable ? <>You receive <b>{formatToken(fees.net)} USDT</b> after the 20% withdrawal fee.</> : "New rewards are added here automatically."}</p>
             <button className="pill db-withdraw" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claim.isPending ? "Confirm in wallet…" : claimReceipt.isLoading ? "Withdrawing…" : claimReceipt.isSuccess ? "Withdrawn" : "Withdraw to wallet"} {!claimBusy && <ArrowUpRight size={16}/>}</button>
             <div className="db-pending">
-              <div><small><Clock size={12}/> Waiting in pools</small><b>{formatToken(queued)} USDT</b></div>
-              <button className="db-btn" disabled={queued === 0n || settleBusy} onClick={doSettle}>{settle.isPending ? "Confirm in wallet…" : settleReceipt.isLoading ? "Settling…" : "Move to balance"}</button>
+              <div><small><Clock size={12}/> Team income in pools</small><b>{formatToken(queued)} USDT</b></div>
+              <button className="db-btn" disabled={settleBusy || queued === 0n} onClick={teamIncome.movable > 0n ? doSettle : () => setTab("earnings")}>{teamIncome.movable > 0n || settleBusy ? settleLabel : queued > 0n ? "Why is it locked?" : "Move to balance"}</button>
             </div>
             {actionError && <p className="db-error">{actionError}</p>}
           </div>
@@ -619,10 +718,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         </div>
 
         <div className="db-kpis">
-          <article><span className="db-icon"><Users size={17}/></span><small>Direct referrals</small><b>{directCount}</b><em>{topRank ? "Top rank reached" : directCount >= directNeed ? "Requirement met" : `${directNeed - directCount} more for ${rankNames[nextRank]}`}</em></article>
-          <article><span className="db-icon"><Network size={17}/></span><small>Total team</small><b>{teamCount.toLocaleString()}</b><em>Everyone in your downline</em></article>
-          <article><span className="db-icon"><Award size={17}/></span><small>Current rank</small><b>{rankNames[currentRank]}</b><em>{topRank ? "Highest rank" : `Next: ${rankNames[nextRank]}`}</em></article>
-          <article><span className="db-icon"><Layers size={17}/></span><small>Pool levels</small><b>{working ?? 0}<i>/8</i> · {singleLeg ?? 0}<i>/10</i></b><em>Working · Single-Leg</em></article>
+          <article><span className="db-icon"><Users size={17}/></span><small>Direct referrals</small><b>{directCount}</b><em>{topRank ? "Top rank reached" : directCount >= directNeed ? "Requirement met" : `${directNeed - directCount} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${directProgress}%` }}/></div></article>
+          <article><span className="db-icon"><Network size={17}/></span><small>Total team</small><b>{teamCount.toLocaleString()}</b><em>{topRank || teamCount >= teamNeed ? "Everyone in your downline" : `${teamNeed - teamCount} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${teamProgress}%` }}/></div></article>
+          <article><span className="db-icon"><Award size={17}/></span><small>Current rank</small><b>{rankNames[currentRank]}</b><em>{topRank ? "Highest rank" : `${Math.round(rankProgress)}% to ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${rankProgress}%` }}/></div></article>
+          <article className="clickable" onClick={() => setTab("earnings")}><span className="db-icon"><Layers size={17}/></span><small>Team income</small><b>{formatToken(teamIncome.earned)}<i> USDT</i></b><em>Working {working ?? 0}/8 · Single-Leg {singleLeg ?? 0}/10</em><div className="kpi-bar"><i style={{ width: `${(working ?? 0) / 8 * 100}%` }}/></div></article>
         </div>
 
         <div className="db-two">
@@ -638,10 +737,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
           <div className="db-card">
             <div className="db-section-head"><div><small>EARNINGS SNAPSHOT</small><h3>Where your rewards are</h3></div><button className="db-text-btn" onClick={() => setTab("earnings")}>Details <ChevronRight size={14}/></button></div>
-            <ul className="db-rows">
-              <li><span><i className="green"/>Available to withdraw</span><b>{formatToken(withdrawable)} USDT</b></li>
-              <li><span><i className="blue"/>Waiting in pools</span><b>{formatToken(queued)} USDT</b></li>
-              <li><span><i className="purple"/>Five-Star royalty</span><b>{formatToken(pendingFiveStar)} USDT</b></li>
+            <ul className="db-rows db-snap">
+              <li><span><em className="snap-icon green"><Wallet size={14}/></em>Available to withdraw</span><b>{formatToken(withdrawable)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon blue"><Layers size={14}/></em>Team income in pools</span><b>{formatToken(queued)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon purple"><Award size={14}/></em>Five-Star royalty</span><b>{formatToken(pendingFiveStar)} <small>USDT</small></b></li>
             </ul>
             <div className="db-placement"><span>Matrix parent</span><b className="mono">{placement === undefined ? "—" : placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b><button className="db-text-btn" onClick={() => setTab("network")}>View network <ChevronRight size={14}/></button></div>
           </div>
@@ -650,47 +749,61 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "earnings" && <div className="db-stack">
         <div className="db-summary">
-          <div className="primary"><small>Available to withdraw</small><b>{formatToken(withdrawable)} <em>USDT</em></b><span>You receive {formatToken(fees.net)} USDT after fees</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw"}</button></div>
-          <div><small>Waiting in pools</small><b>{formatToken(queued)} <em>USDT</em></b><span>Settle to add it to your balance</span><button className="db-btn" disabled={queued === 0n || settleBusy} onClick={doSettle}>{settleBusy ? "Settling…" : "Move to balance"}</button></div>
-          <div><small>Lifetime earned</small><b>{history.data ? formatToken(BigInt(history.data.lifetimeCredited)) : "—"} <em>USDT</em></b><span>{history.data ? `${formatToken(BigInt(history.data.claims.net))} USDT received in ${history.data.claims.count} ${history.data.claims.count === 1 ? "withdrawal" : "withdrawals"}` : "History service unavailable"}</span></div>
+          <div className="primary"><span className="db-sum-icon"><Wallet size={16}/></span><small>Available to withdraw</small><b>{formatToken(withdrawable)} <em>USDT</em></b><span>You receive {formatToken(fees.net)} USDT after fees</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
+          <div><span className="db-sum-icon"><Layers size={16}/></span><small>Team income in pools</small><b>{formatToken(queued)} <em>USDT</em></b><span>{teamIncome.movable > 0n ? `${formatToken(teamIncome.movable)} USDT can move to your balance now` : queued > 0n ? "Locked. See the Team income card below." : "Grows as your team grows"}</span><button className="db-btn" disabled={settleDisabled} onClick={doSettle}>{settleLabel}</button></div>
+          <div><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime earned</small><b>{history.data ? formatToken(BigInt(history.data.lifetimeCredited)) : "—"} <em>USDT</em></b><span>{history.data ? `${formatToken(BigInt(history.data.claims.net))} USDT received in ${history.data.claims.count} ${history.data.claims.count === 1 ? "withdrawal" : "withdrawals"}` : "History service unavailable"}</span></div>
         </div>
         {actionError && <p className="db-error">{actionError}</p>}
 
-        <div className="db-card">
-          <div className="db-section-head"><div><small>INCOME BY SOURCE</small><h3>Everything you've earned</h3></div>{history.data && !historyIncomplete && <span className="db-tag">Lifetime</span>}</div>
+        {teamIncomeCard}
+
+        <div className="db-card db-sources">
+          <div className="db-section-head"><div><small>INCOME BY SOURCE</small><h3>Everything you've earned</h3></div>{history.data && <span className="db-tag">{earnedStreams.length} of {incomeStreams.length} sources active</span>}</div>
           {historyIncomplete && <p className="db-warn">History is still catching up, so these totals may be lower than what you've actually earned. Your balance above is read directly from the contract and is always accurate.</p>}
           {history.isError && <p className="db-warn">Per-source totals come from the history service, which isn't reachable right now. Your balance above is read directly from the contract and is always accurate.</p>}
-          <ul className="db-rows tall db-income-list">{incomeStreams.map(({ reason, name, note }) => {
-            const amount = historyAmount(reason);
-            const count = history.data?.totals[reason]?.count ?? 0;
-            return <li key={reason} className={amount ? "" : "zero"}><span><i className={amount ? "green" : ""}/><div><b>{name}</b><em>{note}{count ? ` · ${count} ${count === 1 ? "payment" : "payments"}` : ""}</em></div></span><b>{amount === undefined ? (history.isLoading ? "…" : "—") : `${formatToken(amount)} USDT`}</b></li>;
-          })}</ul>
+          {history.isLoading && <div className="src-skeleton"><i/><i/><i/></div>}
+          {earnedStreams.length > 0 && <ul className="src-list">{earnedStreams.map(({ reason, name, note, amount, count }) => { const Icon = streamIcon(reason); const pct = sourceTotal ? Number(amount * 1000n / sourceTotal) / 10 : 0; return <li key={reason}>
+            <span className="src-icon"><Icon size={16}/></span>
+            <div className="src-main">
+              <div className="src-top"><b>{name}</b><strong>{formatToken(amount)} <em>USDT</em></strong></div>
+              <div className="src-bar"><i style={{ width: `${Math.max(pct, 2)}%` }}/></div>
+              <div className="src-meta"><span>{note}</span><span>{count} {count === 1 ? "payment" : "payments"} · {pct.toFixed(pct < 10 ? 1 : 0)}%</span></div>
+            </div>
+          </li>; })}</ul>}
+          {history.data && idleStreams.length > 0 && <div className="src-idle"><small>NOT EARNED YET</small><div>{idleStreams.map(({ reason, name }) => { const Icon = streamIcon(reason); return <span key={reason} title={incomeStreams.find(x => x.reason === reason)?.note}><Icon size={13}/> {name}</span>; })}</div></div>}
+          {queued > 0n && <p className="db-foot-note">Plus {formatToken(queued)} USDT of team income still in pools. It's counted here once it moves to your balance.</p>}
           {!isActive && <p className="db-foot-note">Direct and ten-level upline income start once you have 2 direct referrals.{heldForUpgrade ? ` ${formatToken(heldForUpgrade)} USDT has been redirected to the pool reserve so far.` : ""}</p>}
         </div>
 
         <div className="db-two">
-          <div className="db-card">
-            <div className="db-section-head"><div><small>POOL INCOME</small><h3>Waiting to be settled</h3></div></div>
-            <ul className="db-rows tall">{poolRows.map(row => <li key={row.name}><span><i className={row.tone}/><div><b>{row.name}</b><em>{row.note}</em></div></span><b>{formatToken(row.value)} USDT</b></li>)}
-              <li><span><i className="purple"/><div><b>Five-Star Royalty</b><em>Added to your balance when you withdraw</em></div></span><b>{formatToken(pendingFiveStar)} USDT</b></li>
+          <div className="db-card db-fee">
+            <div className="db-section-head"><div><small>WITHDRAWALS</small><h3>Where each withdrawal goes</h3></div></div>
+            <div className="fee-split"><i className="you" style={{ width: "80%" }}><span>80%</span></i><i className="club" style={{ width: "17%" }}><span>17%</span></i><i className="dev" style={{ width: "3%" }}/></div>
+            <ul className="fee-rows">
+              <li><span><i className="you"/>You receive</span><b>{formatToken(fees.net)} USDT</b></li>
+              <li><span><i className="club"/>Five-Star club · 17%</span><b>{formatToken(fees.royalty)} USDT</b></li>
+              <li><span><i className="dev"/>Development fund · 3%</span><b>{formatToken(fees.development)} USDT</b></li>
             </ul>
-            <p className="db-foot-note">Pool income is only paid out up to your rank's earnings cap and while the pool reserve can cover it.</p>
-          </div>
-          <div className="db-card">
-            <div className="db-section-head"><div><small>WITHDRAWALS</small><h3>How the 20% fee works</h3></div></div>
-            <ul className="db-rows">
-              <li><span>Next withdrawal</span><b>{formatToken(withdrawable)} USDT</b></li>
-              <li><span>Five-Star club (17%)</span><b>−{formatToken(fees.royalty)} USDT</b></li>
-              <li><span>Development fund (3%)</span><b>−{formatToken(fees.development)} USDT</b></li>
-              <li className="db-total-row"><span>You receive</span><b>{formatToken(fees.net)} USDT</b></li>
-            </ul>
+            <div className="fee-total"><span>Next withdrawal</span><b>{formatToken(withdrawable)} <em>USDT</em></b></div>
             {history.data && history.data.claims.count > 0 && <p className="db-foot-note">So far you've withdrawn {formatToken(BigInt(history.data.claims.gross))} USDT and received {formatToken(BigInt(history.data.claims.net))} USDT.</p>}
+          </div>
+          <div className="db-card db-club">
+            <div className="db-section-head"><div><small>FIVE-STAR CLUB</small><h3>{currentRank >= 5 ? "You're in the club" : "Royalty share"}</h3></div><span className="club-badge"><Award size={14}/> 5 Star</span></div>
+            <div className="club-amount"><small>Royalty waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>Added to your balance automatically when you withdraw</span></div>
+            {currentRank < 5 ? <div className="club-reqs">
+              <div><div><span>Direct referrals</span><b>{Math.min(directCount, 16)} / 16</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directCount / 16 * 100)}%` }}/></div></div>
+              <div><div><span>Team size</span><b>{Math.min(teamCount, 1000).toLocaleString()} / 1,000</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, teamCount / 10)}%` }}/></div></div>
+            </div> : <p className="db-foot-note">Your share grows with every 1,000 members in your team.</p>}
           </div>
         </div>
 
         {history.data && history.data.recent.length > 0 && <div className="db-card">
-          <div className="db-section-head"><div><small>RECENT ACTIVITY</small><h3>Latest rewards</h3></div></div>
-          <ul className="db-rows db-activity">{history.data.recent.slice(0, 10).map(item => <li key={`${item.txHash}-${item.reason}-${item.amount}`}><span><i className="green"/>{incomeName(item.reason)}</span><a href={`${explorerUrl}/tx/${item.txHash}`} target="_blank" rel="noreferrer">+{formatToken(BigInt(item.amount))} USDT <ExternalLink size={11}/></a></li>)}</ul>
+          <div className="db-section-head"><div><small>RECENT ACTIVITY</small><h3>Latest rewards</h3></div><span className="db-tag">Last {Math.min(10, history.data.recent.length)}</span></div>
+          <ul className="act-list">{history.data.recent.slice(0, 10).map(item => { const Icon = streamIcon(item.reason); return <li key={`${item.txHash}-${item.reason}-${item.amount}`}>
+            <span className="act-icon"><Icon size={15}/></span>
+            <div><b>{incomeName(item.reason)}</b><small>Block {Number(item.blockNumber).toLocaleString()} · <span className="mono">{item.txHash.slice(0, 10)}…</span></small></div>
+            <a href={`${explorerUrl}/tx/${item.txHash}`} target="_blank" rel="noreferrer">+{formatToken(BigInt(item.amount))} <em>USDT</em> <ExternalLink size={12}/></a>
+          </li>; })}</ul>
         </div>}
       </div>}
 

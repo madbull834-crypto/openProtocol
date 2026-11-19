@@ -19,7 +19,7 @@ export const incomeStreams = [
   { reason: "NONWORKING_UPLINE", name: "Non-working upline", note: "From uplines 2–9 of the non-working share" },
   { reason: "REENTRY", name: "Re-entry income", note: "From completed pool re-entries" },
   { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "Weekly reward for the top direct recruiter" },
-  { reason: "POOL_LEVEL_INCOME", name: "Settled pool income", note: "Single-Leg, Working and Non-Working pools you settled" },
+  { reason: "POOL_LEVEL_INCOME", name: "Team income", note: "Single-Leg, Working and Non-Working pools moved to your balance" },
   { reason: "FIVE_STAR_ROYALTY", name: "Five-Star royalty", note: "Your share of the Five-Star club" },
 ] as const;
 
