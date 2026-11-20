@@ -10,6 +10,13 @@ export type IncomeHistory = {
   recent: { reason: string; amount: string; blockNumber: string; txHash: string }[];
 };
 
+export type DirectReferral = {
+  address: Address;
+  memberId: string;
+  directCount: number;
+  joinedAt: string;
+};
+
 /** Labels for every reason code the contract passes to `_credit`. */
 export const incomeStreams = [
   { reason: "DIRECT_INCOME", name: "Direct income", note: "From members you personally referred" },
@@ -38,6 +45,21 @@ export function useIncomeHistory(address?: Address) {
       const body = await response.json() as IncomeHistory;
       if (!body || typeof body.totals !== "object") throw new Error("Unexpected history response");
       return body;
+    },
+  });
+}
+
+/** Direct members indexed from ParticipantRegistered events. */
+export function useDirectReferrals(address?: Address) {
+  return useQuery({
+    queryKey: ["direct-referrals", address?.toLowerCase()],
+    enabled: Boolean(address),
+    refetchInterval: 30_000,
+    retry: 1,
+    queryFn: async (): Promise<DirectReferral[]> => {
+      const response = await fetch(`${apiBaseUrl}/api/participants/${address}/referrals`);
+      if (!response.ok) throw new Error(`Referral service returned ${response.status}`);
+      return await response.json() as DirectReferral[];
     },
   });
 }

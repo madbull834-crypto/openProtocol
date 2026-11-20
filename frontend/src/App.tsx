@@ -9,7 +9,8 @@ import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
 import { useMatrixTree, type MatrixNode } from "./matrix";
-import { incomeName, incomeStreams, useIncomeHistory } from "./income";
+import { incomeName, incomeStreams, useDirectReferrals, useIncomeHistory } from "./income";
+import { Landing } from "./Landing";
 
 const allocation = [
   { name: "Working pool", value: 15, tone: "blue", note: "Funds direct-referral and upline income across the working levels." },
@@ -56,10 +57,12 @@ export default function App() {
     ? [["overview", "Home"], ["referrals", "Dashboard"], ["mechanics", "Mechanics"]] as const
     : [["overview", "Home"], ["participate", "Join"], ["referrals", "Network"], ["mechanics", "Mechanics"]] as const;
 
+  if (view === "landing") return <Landing memberCount={memberCount} total={total} ticket={ticket} onLaunch={() => setView(isRegistered ? "referrals" : "overview")}/>;
+
   return <div className="shell">
     <header className="globalnav">
       <div className="globalnav-inner">
-        <button className="wordmark" onClick={() => setView("overview")} aria-label="Open Protocol home"><span className="brand-mark"><b>O</b><i>P</i></span><span className="brand-copy"><b>OPEN PROTOCOL</b><small>On-chain membership network</small></span></button>
+        <button className="wordmark" onClick={() => setView("landing")} aria-label="Open Protocol home"><span className="brand-mark"><b>O</b><i>P</i></span><span className="brand-copy"><b>OPEN PROTOCOL</b><small>On-chain membership network</small></span></button>
         <nav>{nav.map(([key, label]) => <button key={key} className={view === key ? "active" : ""} onClick={() => setView(key)}>{label}</button>)}</nav>
         <div className="globalnav-right"><GetTestUsdtButton/><ConnectButton accountStatus="address" chainStatus="none" showBalance={false} label="Connect"/></div>
       </div>
@@ -508,6 +511,7 @@ function txErrorMessage(error: Error | null, action: string) {
 
 function Referrals({ address, participant, onParticipate }: { address?: Address; participant?: { id: bigint; directCount: bigint; sponsor: Address; joinedAt: bigint }; onParticipate: () => void }) {
   const account = address ?? zeroAddress;
+  const currentWeek = BigInt(Math.floor(Date.now() / 1000 / (7 * 24 * 60 * 60)));
   const rewards = useReadContracts({
     contracts: protocolAddress ? [
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "withdrawable", args: [account] },
@@ -527,6 +531,11 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "rankedPoolRewardsCredited", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingReserve" },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingReserve" },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingReentries", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingReentries", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "fiveStarWeight", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "weeklyDirects", args: [currentWeek, account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "weeklyCompetition", args: [currentWeek] },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -557,6 +566,12 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     nonWorkingReserve: rewards.data?.[16]?.result as bigint | undefined,
   });
   const history = useIncomeHistory(isMember(participant) ? address : undefined);
+  const directReferrals = useDirectReferrals(isMember(participant) ? address : undefined);
+  const workingReentries = rewards.data?.[17]?.result as bigint | undefined;
+  const nonWorkingReentries = rewards.data?.[18]?.result as bigint | undefined;
+  const fiveStarWeight = rewards.data?.[19]?.result as bigint | undefined;
+  const weeklyDirects = rewards.data?.[20]?.result as bigint | undefined;
+  const weeklyCompetition = rewards.data?.[21]?.result as readonly [Address, bigint, boolean] | undefined;
   useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) void history.refetch(); }, [claimReceipt.isSuccess, settleReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
   // claimable = everything credited − everything withdrawn, so a shortfall means the indexer started late or is behind.
   const historyIncomplete = Boolean(history.data && creditedIncome !== undefined && BigInt(history.data.lifetimeCredited) - BigInt(history.data.claims.gross) < creditedIncome);
@@ -564,7 +579,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
   const [tab, setTab] = useState<"overview" | "earnings" | "network">("overview");
   const [copied, setCopied] = useState<"link" | "address">();
-  const [networkView, setNetworkView] = useState<"matrix" | "working" | "single">("matrix");
+  const [networkView, setNetworkView] = useState<"matrix" | "working" | "nonworking" | "single">("matrix");
   const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "";
   const copyText = (value: string, kind: "link" | "address") => { void navigator.clipboard.writeText(value); setCopied(kind); setTimeout(() => setCopied(undefined), 1600); };
   const share = async () => {
@@ -588,6 +603,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const teamProgress = teamNeed ? Math.min(100, teamCount / teamNeed * 100) : 100;
   const rankProgress = topRank ? 100 : Math.min(directProgress, teamProgress);
   const networkName = requiredChainId === 97 ? "BSC Testnet" : "BNB Smart Chain";
+  const weekEnds = new Date(Number((currentWeek + 1n) * 7n * 24n * 60n * 60n) * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const capLabel = currentRank >= 4 ? "Unlimited" : `${[2, 5, 10, 50][currentRank]}× ticket`;
   const claimBusy = claim.isPending || claimReceipt.isLoading;
   const settleBusy = settle.isPending || settleReceipt.isLoading;
   const actionError = txErrorMessage(claim.error, "Withdrawal") ?? txErrorMessage(settle.error, "Settlement");
@@ -719,7 +736,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
         <div className="db-kpis">
           <article><span className="db-icon"><Users size={17}/></span><small>Direct referrals</small><b>{directCount}</b><em>{topRank ? "Top rank reached" : directCount >= directNeed ? "Requirement met" : `${directNeed - directCount} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${directProgress}%` }}/></div></article>
-          <article><span className="db-icon"><Network size={17}/></span><small>Total team</small><b>{teamCount.toLocaleString()}</b><em>{topRank || teamCount >= teamNeed ? "Everyone in your downline" : `${teamNeed - teamCount} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${teamProgress}%` }}/></div></article>
+          <article><span className="db-icon"><Network size={17}/></span><small>Qualified team</small><b>{teamCount.toLocaleString()}</b><em>{topRank || teamCount >= teamNeed ? "Sponsor descendants within 10 levels" : `${teamNeed - teamCount} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${teamProgress}%` }}/></div></article>
           <article><span className="db-icon"><Award size={17}/></span><small>Current rank</small><b>{rankNames[currentRank]}</b><em>{topRank ? "Highest rank" : `${Math.round(rankProgress)}% to ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${rankProgress}%` }}/></div></article>
           <article className="clickable" onClick={() => setTab("earnings")}><span className="db-icon"><Layers size={17}/></span><small>Team income</small><b>{formatToken(teamIncome.earned)}<i> USDT</i></b><em>Working {working ?? 0}/8 · Single-Leg {singleLeg ?? 0}/10</em><div className="kpi-bar"><i style={{ width: `${(working ?? 0) / 8 * 100}%` }}/></div></article>
         </div>
@@ -743,6 +760,38 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <li><span><em className="snap-icon purple"><Award size={14}/></em>Five-Star royalty</span><b>{formatToken(pendingFiveStar)} <small>USDT</small></b></li>
             </ul>
             <div className="db-placement"><span>Matrix parent</span><b className="mono">{placement === undefined ? "—" : placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b><button className="db-text-btn" onClick={() => setTab("network")}>View network <ChevronRight size={14}/></button></div>
+          </div>
+        </div>
+
+        <div className="db-lifecycle">
+          <article><span className="db-icon"><Zap size={16}/></span><small>Working re-entry</small><b>{workingReentries?.toString() ?? "—"}</b><em>One cycle per 16 qualified team members</em></article>
+          <article><span className="db-icon"><Network size={16}/></span><small>Non-working re-entry</small><b>{nonWorkingReentries?.toString() ?? "—"}</b><em>One cycle per 30 qualified team members</em></article>
+          <article><span className="db-icon"><Award size={16}/></span><small>Five-Star weights</small><b>{fiveStarWeight?.toString() ?? "—"}</b><em>One more weight per additional 1,000 team</em></article>
+          <article><span className="db-icon"><ShieldCheck size={16}/></span><small>Pool earning cap</small><b>{capLabel}</b><em>{teamIncome.unlimited ? "No pool cap at this rank" : `${formatToken(teamIncome.capLeft)} USDT capacity remaining`}</em></article>
+        </div>
+
+        <div className="db-two">
+          <div className="db-card db-directs">
+            <div className="db-section-head"><div><small>DIRECT REFERRALS</small><h3>Your personally invited members</h3></div><span className="db-tag">{directReferrals.data?.length ?? directCount}</span></div>
+            {directReferrals.isLoading && <p className="db-foot-note">Loading indexed referrals…</p>}
+            {directReferrals.isError && <p className="db-warn">The referral history service is unavailable. The on-chain count remains {directCount}.</p>}
+            {directReferrals.data?.length === 0 && <p className="db-empty-note">No direct members yet. Share your personal invitation link to begin.</p>}
+            {directReferrals.data && directReferrals.data.length > 0 && <ul className="direct-list">{directReferrals.data.slice(0, 8).map(member => <li key={member.address}>
+              <span><b>Member #{member.memberId}</b><small>{new Date(member.joinedAt).toLocaleDateString()}</small></span>
+              <a className="mono" href={`${explorerUrl}/address/${member.address}`} target="_blank" rel="noreferrer">{shortAddress(member.address)} <ExternalLink size={11}/></a>
+            </li>)}</ul>}
+            {directReferrals.data && directReferrals.data.length > 8 && <p className="db-foot-note">Showing the first 8 of {directReferrals.data.length} indexed direct members.</p>}
+          </div>
+
+          <div className="db-card db-weekly">
+            <div className="db-section-head"><div><small>WEEKLY SUPERSTAR</small><h3>Current recruiting week</h3></div><span className="db-tag">Week {currentWeek.toString()}</span></div>
+            <div className="weekly-score"><div><small>Your directs</small><b>{weeklyDirects?.toString() ?? "—"}</b></div><div><small>Leading score</small><b>{weeklyCompetition?.[1]?.toString() ?? "—"}</b></div></div>
+            <ul className="db-rows">
+              <li><span>Current leader</span><b className="mono">{!weeklyCompetition || weeklyCompetition[0] === zeroAddress ? "No leader yet" : weeklyCompetition[0].toLowerCase() === address.toLowerCase() ? "You" : shortAddress(weeklyCompetition[0])}</b></li>
+              <li><span>Week ends</span><b>{weekEnds}</b></li>
+              <li><span>Status</span><b>{weeklyCompetition?.[2] ? "Closed" : "In progress"}</b></li>
+            </ul>
+            <p className="db-foot-note">The earliest member to hold the highest direct count leads. A completed week can be closed permissionlessly on-chain.</p>
           </div>
         </div>
       </div>}
@@ -809,12 +858,12 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "network" && <div className="tile matrix dashboard-network db-network">
         <div className="db-seg" role="tablist" aria-label="Network system">
-          {([["matrix", "Global Matrix", `Placement`], ["working", "Working Pool", `Level ${working ?? 0}/8`], ["single", "Single Leg", `Level ${singleLeg ?? 0}/10`]] as const).map(([key, label, meta]) => <button key={key} className={networkView === key ? "active" : ""} onClick={() => setNetworkView(key)}><b>{label}</b><span>{meta}</span></button>)}
+          {([["matrix", "Global Matrix", `Placement`], ["working", "Working Pool", `Level ${working ?? 0}/8`], ["nonworking", "Non-Working", `Level ${nonWorking ?? 0}/15`], ["single", "Single Leg", `Level ${singleLeg ?? 0}/10`]] as const).map(([key, label, meta]) => <button key={key} className={networkView === key ? "active" : ""} onClick={() => setNetworkView(key)}><b>{label}</b><span>{meta}</span></button>)}
         </div>
         {networkView === "matrix" && <><div className="view-heading"><div><small>GLOBAL MATRIX</small><h4>Your placement tree</h4></div><p>Everyone enters one shared binary queue and each member holds two positions. Your sponsor and your matrix parent can be different people.</p></div><MatrixTree address={address} parent={placement}/></>}
         {networkView === "working" && <WorkingTree address={address} team={team} currentLevel={working}/>}
+        {networkView === "nonworking" && <NonWorkingTree address={address} team={team} currentLevel={nonWorking}/>}
         {networkView === "single" && <SingleLegTree address={address} team={team} directs={participant?.directCount} currentLevel={singleLeg}/>}
-        <p className="db-foot-note">Non-working level: {nonWorking ?? 0}</p>
       </div>}
     </div></section>
   </motion.div>;
@@ -829,30 +878,83 @@ function WorkingTree({ address, team, currentLevel }: { address?: Address; team?
     contracts: protocolAddress ? Array.from({ length: 8 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevelQuote" as const, args: [index + 1] as const })) : [],
     query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
   });
+  const values = Array.from({ length: 8 }, (_, index) => quotes.data?.[index]?.result as WorkingQuote | undefined);
+  return <PoolMatrixPanel kind="working" address={address} team={team} currentLevel={currentLevel} maxLevel={8} quotes={values}/>;
+}
+
+function NonWorkingTree({ address, team, currentLevel }: { address?: Address; team?: bigint; currentLevel?: number }) {
+  const quotes = useReadContracts({
+    allowFailure: true,
+    contracts: protocolAddress ? Array.from({ length: 15 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingLevelQuote" as const, args: [index + 1] as const })) : [],
+    query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
+  });
+  const values = Array.from({ length: 15 }, (_, index) => quotes.data?.[index]?.result as WorkingQuote | undefined);
+  return <PoolMatrixPanel kind="nonworking" address={address} team={team} currentLevel={currentLevel} maxLevel={15} quotes={values}/>;
+}
+
+function PoolMatrixPanel({ kind, address, team, currentLevel = 0, maxLevel, quotes }: {
+  kind: "working" | "nonworking"; address?: Address; team?: bigint; currentLevel?: number; maxLevel: number; quotes: (WorkingQuote | undefined)[];
+}) {
+  const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
+  const [selectedLevel, setSelectedLevel] = useState(initialLevel);
+  useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
   const teamValue = Number(team ?? 0n);
-  return <div className="progression-view">
-    <div className="view-heading"><div><small>WORKING POOL</small><h4>Team growth unlocks levels</h4></div><p>Every two additional team members unlock the next level. The contract calculates the turnover, reserves the next upgrade, and queues the remainder.</p></div>
-    <div className="logic-strip"><div><b>1</b><span>Team grows</span><small>All downline members count</small></div><i/><div><b>2</b><span>Threshold reached</span><small>2, 4, 6… members</small></div><i/><div><b>3</b><span>Reward queued</span><small>Settle when backed</small></div></div>
-    <div className="progression-owner"><span className="owner-mark">W</span><div><small>WORKING POOL</small><b>{address ? shortAddress(address) : "Connect wallet"}</b></div><strong>Level {currentLevel ?? 0} / 8</strong></div>
-    <div className="progression-stem"/>
-    <div className="working-levels">{Array.from({ length: 8 }, (_, index) => {
-      const level = index + 1;
-      const quote = quotes.data?.[index]?.result as WorkingQuote | undefined;
-      const required = Number(quote?.[0] ?? BigInt(level * 2));
-      const reached = (currentLevel ?? 0) >= level;
-      const current = !reached && level === (currentLevel ?? 0) + 1;
-      const progress = Math.min(100, required ? teamValue / required * 100 : 0);
-      return <div className={`level-card ${reached ? "reached" : current ? "current" : ""}`} key={level}>
-        <div className="level-top"><span>LEVEL {level}</span><b>{reached ? "Reached" : current ? "In progress" : "Locked"}</b></div>
-        <strong>{required} team members</strong>
-        <p>ID amount {formatToken(quote?.[1])} USDT · {formatToken(quote?.[4])} distributable</p>
-        <div className="level-progress"><i style={{ width: `${reached ? 100 : current ? progress : 0}%` }}/></div>
-        <small>{reached ? `${required}/${required} complete` : current ? `${Math.min(teamValue, required)}/${required} members` : `Unlock after Level ${level - 1}`}</small>
-      </div>;
-    })}</div>
-    <p className="tree-disclaimer">Working levels advance automatically when the on-chain team count reaches each threshold. Amounts are read from the deployed contract.</p>
+  const quote = quotes[selectedLevel - 1];
+  const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
+  const positions = [selectedLevel * 2 - 1, selectedLevel * 2];
+  const filledInLevel = positions.filter(position => teamValue >= position).length;
+  const reached = currentLevel >= selectedLevel;
+  const current = !reached && selectedLevel === currentLevel + 1;
+  const title = kind === "working" ? "Working Matrix" : "Non-Working Matrix";
+  const tone = kind === "working" ? "working" : "nonworking";
+
+  return <div className={`pool-matrix-view ${tone}`}>
+    <div className="pool-matrix-focus">
+      <div className="pool-position-card">
+        <span className="pool-avatar">{kind === "working" ? "W" : "N"}</span>
+        <div><small>YOUR MATRIX POSITION</small><b>{address ? shortAddress(address) : "Connect wallet"}</b></div>
+        <strong>Level {selectedLevel}</strong>
+      </div>
+      <div className="pool-connector"/>
+      <div className="pool-completion"><span>Completion positions</span><b>{filledInLevel}/2 toward automatic advancement</b></div>
+      <div className="pool-branch">
+        {positions.map((position, index) => {
+          const filled = teamValue >= position;
+          return <div className={`pool-position ${filled ? "filled" : "available"}`} key={position}><i>{filled ? <Check size={18}/> : index + 1}</i><b>{filled ? "FILLED" : "AVAILABLE"}</b><small>Team position {position}</small></div>;
+        })}
+      </div>
+      <div className="pool-level-copy">
+        <b>{filledInLevel} of 2 positions filled in this {kind === "working" ? "Working" : "Non-Working"} level</b>
+        <span>{reached ? "Level completed" : current ? "Position awaiting activation" : `Complete Level ${selectedLevel - 1} first`}</span>
+      </div>
+      <div className="pool-focus-progress"><i style={{ width: `${filledInLevel * 50}%` }}/></div>
+      <p>Positions are calculated from your qualified sponsor-tree count. Select any contract level below to inspect its requirements and economics.</p>
+    </div>
+
+    <div className="pool-economics">
+      <div className="pool-economics-head"><div><small>CONTRACT-VERIFIED ECONOMICS</small><h4>{title}</h4></div><div className="pool-selected-summary"><span>Selected Level {selectedLevel}</span><b>{required} team required</b></div></div>
+      <div className="pool-table-wrap"><table className="pool-table"><thead><tr><th>Level</th><th>Team</th><th>ID amount</th><th>Turnover</th><th>Auto upgrade</th><th>Distributable</th><th>Status</th></tr></thead><tbody>
+        {Array.from({ length: maxLevel }, (_, index) => {
+          const level = index + 1;
+          const row = quotes[index];
+          const rowReached = currentLevel >= level;
+          const rowCurrent = !rowReached && level === currentLevel + 1;
+          return <tr key={level} className={`${selectedLevel === level ? "selected" : ""} ${rowReached ? "reached" : rowCurrent ? "current" : "locked"}`} onClick={() => setSelectedLevel(level)} tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") setSelectedLevel(level); }}>
+            <td data-label="Level"><span className="pool-td-level">Level </span>{level}</td><td data-label="Team">{Number(row?.[0] ?? BigInt(level * 2))}</td><td data-label="ID amount">{formatToken(row?.[1])} USDT</td><td data-label="Turnover">{formatToken(row?.[2])} USDT</td><td data-label="Auto upgrade">{formatToken(row?.[3])} USDT</td><td data-label="Distributable">{formatToken(row?.[4])} USDT</td><td data-label="Status"><span className="pool-status">{rowReached ? "Complete" : rowCurrent ? "In progress" : "Locked"}</span></td>
+          </tr>;
+        })}
+      </tbody></table></div>
+      <p className="tree-disclaimer">All thresholds and monetary values are read from the deployed contract. The matrix shows progress positions, while placement relationships remain in the Global Matrix tab.</p>
+    </div>
   </div>;
 }
+
+/** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
+const SINGLE_LEG_TABLE = [
+  [10, 1, 10, 5, 1], [15, 1, 15, 0, 2], [30, 1, 35, 9, 3], [60, 2, 50, 0, 5], [250, 2, 150, 0, 10],
+  [600, 3, 500, 0, 30], [1_000, 3, 1_500, 0, 100], [1_500, 3, 3_500, 0, 400], [2_500, 4, 10_000, 0, 1_000], [3_700, 4, 15_000, 0, 2_500],
+] as const;
+const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 function SingleLegTree({ address, team, directs, currentLevel }: { address?: Address; team?: bigint; directs?: bigint; currentLevel?: number }) {
   const quotes = useReadContracts({
@@ -860,61 +962,104 @@ function SingleLegTree({ address, team, directs, currentLevel }: { address?: Add
     contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
     query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
   });
+  const toUsdt = (v: bigint) => Number(v) / 1e6;
+  const levels = SINGLE_LEG_TABLE.map(([members, directNeed, income, extra, upline], index) => {
+    const quote = quotes.data?.[index]?.result as SingleLegQuote | undefined;
+    return quote
+      ? { level: index + 1, members: Number(quote[0]), directs: Number(quote[1]), income: toUsdt(quote[2]), extra: toUsdt(quote[3]), upline: toUsdt(quote[4]) }
+      : { level: index + 1, members, directs: directNeed, income, extra, upline };
+  });
   const teamValue = Number(team ?? 0n);
   const directValue = Number(directs ?? 0n);
-  return <div className="progression-view single-view">
-    <div className="view-heading"><div><small>SINGLE LEG</small><h4>Two requirements move together</h4></div><p>A milestone completes only when you have both the required total team and the required number of personally sponsored members.</p></div>
-    <div className="logic-strip"><div><b>1</b><span>Build your team</span><small>All downline members</small></div><i/><div><b>+</b><span>Add directs</span><small>Your personal referrals</small></div><i/><div><b>3</b><span>Complete level</span><small>Both must be satisfied</small></div></div>
-    <div className="progression-owner"><span className="owner-mark single">S</span><div><small>SINGLE LEG</small><b>{address ? shortAddress(address) : "Connect wallet"}</b></div><strong>Level {currentLevel ?? 0} / 10</strong></div>
-    <div className="single-path">{Array.from({ length: 10 }, (_, index) => {
-      const level = index + 1;
-      const quote = quotes.data?.[index]?.result as SingleLegQuote | undefined;
-      const members = Number(quote?.[0] ?? 0n);
-      const directNeed = Number(quote?.[1] ?? 0n);
-      const reached = (currentLevel ?? 0) >= level;
-      const current = !reached && level === (currentLevel ?? 0) + 1;
-      const income = (quote?.[2] ?? 0n) + (quote?.[3] ?? 0n);
-      return <div className={`single-step ${reached ? "reached" : current ? "current" : ""}`} key={level}>
-        <span className="single-node">{reached ? <Check size={15}/> : level}</span>
-        <div className="single-copy"><div><small>LEVEL {level}</small><b>{reached ? "Completed" : current ? "Next milestone" : "Locked"}</b></div><p>{members} team · {directNeed} direct {directNeed === 1 ? "referral" : "referrals"}</p></div>
-        <div className="single-numbers"><small>YOUR PROGRESS</small><b>{Math.min(teamValue, members)}/{members} team · {Math.min(directValue, directNeed)}/{directNeed} direct</b></div>
-        <div className="single-income"><small>LEVEL INCOME</small><b>{formatToken(income)} USDT</b></div>
-      </div>;
-    })}</div>
-    <p className="tree-disclaimer">A Single-Leg level completes only when both the team and direct-referral requirements are met. Income excludes the separately credited first and second uplines.</p>
+  const done = currentLevel ?? 0;
+  const next = levels[done];
+  const earned = levels.slice(0, done).reduce((sum, l) => sum + l.income + l.extra, 0);
+  const remaining = levels.slice(done).reduce((sum, l) => sum + l.income + l.extra, 0);
+  const teamLeft = next ? Math.max(0, next.members - teamValue) : 0;
+  const directsLeft = next ? Math.max(0, next.directs - directValue) : 0;
+  const todo = [
+    teamLeft > 0 && `grow your team by ${teamLeft.toLocaleString()} ${teamLeft === 1 ? "member" : "members"}`,
+    directsLeft > 0 && `personally invite ${directsLeft} more ${directsLeft === 1 ? "person" : "people"}`,
+  ].filter(Boolean) as string[];
+  const bar = (have: number, need: number) => <div className="sl-bar"><i style={{ width: `${need ? Math.min(100, have / need * 100) : 100}%` }}/></div>;
+
+  return <div className="progression-view sl">
+    <div className="sl-explain">
+      <div><span>1</span><b>Grow your team</b><p>Everyone who joins under you, up to 10 levels deep, counts toward your team.</p></div>
+      <div><span>2</span><b>Invite people yourself</b><p>Each level also needs a few members you referred directly.</p></div>
+      <div><span>3</span><b>Unlock a one-time reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
+    </div>
+
+    {next ? <div className="sl-next">
+      <div className="sl-next-head">
+        <div><small>YOUR NEXT GOAL</small><h4>Level {next.level} <em>of 10</em></h4></div>
+        <div className="sl-reward"><small>REWARD</small><b>{usdt(next.income + next.extra)} <em>USDT</em></b></div>
+      </div>
+      <div className="sl-req">
+        <div className={teamLeft === 0 ? "ok" : ""}><div><span><Users size={15}/> Team size</span><b>{Math.min(teamValue, next.members).toLocaleString()} / {next.members.toLocaleString()}</b></div>{bar(teamValue, next.members)}<small>{teamLeft === 0 ? <><Check size={12}/> Target met</> : `${teamLeft.toLocaleString()} more needed`}</small></div>
+        <div className={directsLeft === 0 ? "ok" : ""}><div><span><UserRoundCheck size={15}/> Direct referrals</span><b>{Math.min(directValue, next.directs)} / {next.directs}</b></div>{bar(directValue, next.directs)}<small>{directsLeft === 0 ? <><Check size={12}/> Target met</> : `${directsLeft} more needed`}</small></div>
+      </div>
+      <p className="sl-todo"><Zap size={15}/><span>{address ? <>To unlock <b>{usdt(next.income + next.extra)} USDT</b>, {todo.join(" and ")}.</> : "Connect your wallet to see your progress."}</span></p>
+    </div> : <div className="sl-next sl-complete"><Award size={22}/><div><h4>All 10 levels complete</h4><p>You have unlocked every Single-Leg reward.</p></div></div>}
+
+    <div className="sl-summary">
+      <div><small>LEVELS DONE</small><b>{done} / 10</b></div>
+      <div><small>UNLOCKED SO FAR</small><b>{usdt(earned)} <em>USDT</em></b></div>
+      <div><small>STILL AVAILABLE</small><b>{usdt(remaining)} <em>USDT</em></b></div>
+    </div>
+
+    <div className="sl-table" role="table" aria-label="Single-Leg levels">
+      <div className="sl-row sl-th" role="row"><span>Level</span><span>Team needed</span><span>Direct referrals</span><span>Your reward</span><span>Status</span></div>
+      {levels.map(l => {
+        const state = l.level <= done ? "done" : l.level === done + 1 ? "next" : "locked";
+        return <div className={`sl-row ${state}`} role="row" key={l.level}>
+          <span className="sl-lvl"><i>{state === "done" ? <Check size={13}/> : l.level}</i><em>Level {l.level}</em></span>
+          <span data-label="Team">{l.members.toLocaleString()}</span>
+          <span data-label="Directs">{l.directs}</span>
+          <span data-label="Reward" className="sl-amt"><span>{usdt(l.income + l.extra)} USDT{l.extra > 0 && <small>incl. {usdt(l.extra)} re-entry bonus</small>}</span></span>
+          <span className="sl-status">{state === "done" ? "Unlocked" : state === "next" ? "In progress" : "Locked"}</span>
+        </div>;
+      })}
+    </div>
+
+    <div className="sl-bonus"><Users size={16}/><p><b>Bonus for your sponsors.</b> Each time someone you invited (or someone they invited) unlocks a level, you also receive an upline bonus — from {usdt(levels[0].upline)} USDT at level 1 up to {usdt(levels[9].upline)} USDT at level 10. You need at least 2 direct referrals to receive it.</p></div>
+    <p className="tree-disclaimer">Single-Leg rewards are queued as team income. Use “Move to balance” on the Earnings tab to add them to your claimable balance; the amount you can move is limited by your rank cap and the pool reserve.</p>
   </div>;
 }
 
 function MatrixTree({ address, parent }: { address?: Address; parent?: Address }) {
-  const { tree, loading, filled, failed } = useMatrixTree(address);
+  const [selectedRoot, setSelectedRoot] = useState<Address | undefined>(address);
+  useEffect(() => { setSelectedRoot(address); }, [address]);
+  const { tree, loading, filled, failed } = useMatrixTree(selectedRoot);
+  const selectedParentRead = useReadContract({
+    address: protocolAddress ?? zeroAddress,
+    abi: protocolAbi,
+    chainId: requiredChainId,
+    functionName: "matrixParent",
+    args: [selectedRoot ?? zeroAddress],
+    query: { enabled: Boolean(protocolAddress && selectedRoot && selectedRoot !== address), refetchInterval: 12_000 },
+  });
   if (!address) return <div className="empty">Connect a wallet to see your position in the matrix.</div>;
-  const root: MatrixNode = tree ?? { address, children: [null, null] };
+  const activeRoot = selectedRoot ?? address;
+  const selectedParent = activeRoot === address ? parent : selectedParentRead.data;
+  const root: MatrixNode = tree ?? { address: activeRoot, children: [null, null] };
   return <div className="tree-wrap">
-    <div className="tree-meta"><span>{loading ? "Reading the matrix…" : configured ? `${filled} of 14 visible positions filled` : "Awaiting deployment"}</span><span className="tree-legend"><i className="slot-key you"/>You<i className="slot-key member"/>Member<i className="slot-key open"/>Open</span></div>
+    <div className="tree-browser"><div><small>VIEWING MATRIX ROOT</small><b>{activeRoot === address ? "Your position" : shortAddress(activeRoot)}</b></div>{activeRoot !== address && <button className="db-btn" onClick={() => setSelectedRoot(address)}>Back to my tree</button>}</div>
+    <div className="tree-meta"><span>{loading ? "Reading the matrix…" : configured ? `${filled} of 14 visible positions filled · select a member to explore` : "Awaiting deployment"}</span><span className="tree-legend"><i className="slot-key you"/>Your wallet<i className="slot-key member"/>Member<i className="slot-key open"/>Open</span></div>
     <div className="tree-progress" aria-label={`${filled} of 14 visible matrix positions filled`}><span style={{ width: `${filled / 14 * 100}%` }}/></div>
     {failed > 0 && <p className="tree-warning">{failed} on-chain {failed === 1 ? "read" : "reads"} could not be completed. Successful branches remain visible and failed reads retry automatically.</p>}
     <div className="tree">
-      <div className="tnode parent"><div className="slot ghost"><small>Matrix parent</small><b>{parent === undefined ? "—" : parent === zeroAddress ? "Genesis" : shortAddress(parent)}</b></div></div>
-      <TreeNode node={root} depth={0} self={address}/>
-    </div>
-    <div className="mobile-tree">
-      <div className="mobile-parent"><span>Matrix parent</span><b>{parent === undefined ? "—" : parent === zeroAddress ? "Genesis" : shortAddress(parent)}</b></div>
-      {[0, 1, 2, 3].map((depth) => <div className="mobile-level" key={depth}><div className="mobile-level-head"><span>{depth === 0 ? "YOU" : `LEVEL ${depth}`}</span><small>{depth === 0 ? "Your position" : `${2 ** depth} positions`}</small></div><div className="mobile-level-nodes">{matrixLevel(root, depth).map((node, index) => <div className={`mobile-node ${depth === 0 ? "you" : node ? "member" : "open"}`} key={index}><span>{node ? node.id ? `Member ${node.id}` : depth === 0 ? "You" : "Member" : "Open"}</span><b>{node ? shortAddress(node.address) : `Position ${index + 1}`}</b></div>)}</div></div>)}
+      <div className="tnode parent"><div className="slot ghost"><small>Matrix parent</small><b>{selectedParent === undefined ? "—" : selectedParent === zeroAddress ? "Genesis" : shortAddress(selectedParent)}</b></div></div>
+      <TreeNode node={root} depth={0} self={address} onSelect={setSelectedRoot}/>
     </div>
   </div>;
 }
 
-function matrixLevel(root: MatrixNode, depth: number): (MatrixNode | null)[] {
-  let level: (MatrixNode | null)[] = [root];
-  for (let current = 0; current < depth; current += 1) level = level.flatMap((node) => node ? node.children : [null, null]);
-  return level;
-}
-
-function TreeNode({ node, depth, self }: { node: MatrixNode | null; depth: number; self: Address }) {
+function TreeNode({ node, depth, self, onSelect }: { node: MatrixNode | null; depth: number; self: Address; onSelect: (address: Address) => void }) {
   const leaf = depth >= 3;
   return <div className="tnode">
-    {node ? <div className={`slot ${node.address.toLowerCase() === self.toLowerCase() ? "you" : "member"}`}><small>{node.address.toLowerCase() === self.toLowerCase() ? "You" : node.id ? `No. ${node.id.toString()}` : "Member"}</small><b>{shortAddress(node.address)}</b></div> : <div className="slot open"><small>Open</small><b>Level {depth}</b></div>}
-    {!leaf && <div className="kids"><TreeNode node={node?.children[0] ?? null} depth={depth + 1} self={self}/><TreeNode node={node?.children[1] ?? null} depth={depth + 1} self={self}/></div>}
+    {node ? <button onClick={() => onSelect(node.address)} className={`slot ${node.address.toLowerCase() === self.toLowerCase() ? "you" : "member"}`}><small>{node.address.toLowerCase() === self.toLowerCase() ? "You" : node.id ? `No. ${node.id.toString()}` : "Member"}</small><b>{shortAddress(node.address)}</b><em className="slot-tail">…{node.address.slice(-4)}</em></button> : <div className="slot open"><small>Open</small><b>Level {depth}</b></div>}
+    {!leaf && <div className="kids"><TreeNode node={node?.children[0] ?? null} depth={depth + 1} self={self} onSelect={onSelect}/><TreeNode node={node?.children[1] ?? null} depth={depth + 1} self={self} onSelect={onSelect}/></div>}
   </div>;
 }
 

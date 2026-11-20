@@ -60,6 +60,9 @@ describe("OpenProtocolParticipation", function () {
 
   it("exposes the exact pool tables and original ten-level percentages", async function () {
     const { protocol } = await fixture();
+    expect(await protocol.singleLegQuote(3)).to.deep.equal([
+      30n, 2n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
+    ]);
     expect(await protocol.workingLevelQuote(8)).to.deep.equal([
       16n, 960_000_000n, 15_360_000_000n, 0n, 15_360_000_000n,
     ]);
@@ -72,6 +75,16 @@ describe("OpenProtocolParticipation", function () {
     const bps = [];
     for (let level = 1; level <= 10; level++) bps.push(await protocol.tenLevelPercentageBps(level));
     expect(bps).to.deep.equal([1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n, 50n]);
+  });
+
+  it("requires two directs and prior sequential completion for single-leg level three", async function () {
+    const { protocol } = await fixture();
+    const quote1 = await protocol.singleLegQuote(1);
+    const quote2 = await protocol.singleLegQuote(2);
+    const quote3 = await protocol.singleLegQuote(3);
+    expect(quote1.directs).to.equal(1);
+    expect(quote2.directs).to.equal(1);
+    expect(quote3.directs).to.equal(2);
   });
 
   it("queues level income after consuming the next auto-upgrade", async function () {

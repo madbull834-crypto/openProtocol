@@ -1,5 +1,9 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
 import { getAddress, type Address } from "viem";
+
+// Workspace scripts execute with `backend/` as cwd; load the repository-level
+// environment file explicitly so dev, indexer, and compiled builds agree.
+loadEnv({ path: new URL("../../.env", import.meta.url), quiet: true });
 
 function required(name: string): string {
   const value = process.env[name];

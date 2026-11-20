@@ -502,7 +502,7 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     }
 
     function _singleLegDirects(uint8 level) private pure returns (uint64) {
-        if (level <= 3) return 1;
+        if (level <= 2) return 1;
         if (level <= 5) return 2;
         if (level <= 8) return 3;
         return 4;

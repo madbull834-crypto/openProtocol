@@ -32,6 +32,7 @@ The implementation now includes deterministic rules where the source PDF is inco
 - The first two directs activate a sponsor and their 80% working shares become locked auto-upgrade reserve. From the third direct onward, that 80% (12 USDT) is claimable by the sponsor.
 - Remaining working funds use the original ten-level schedule: 10%, 4%, 2%, then 0.5% at levels 4–10. The remaining 0.5% stays reserved. Non-working registration funds remain 80% to the matrix parent, 10% to U1, and 10% shared by U2–U9.
 - The single-leg thresholds and exact income/extra/U1/U2 values from levels 1–10 are encoded. Working levels use ID amounts 15, 15, 30, …, 960; non-working levels use 5, 5, 10, …, 40,960.
+- Business clarification: Single-Leg Level 3 requires Levels 1 and 2 to have completed sequentially and at least two personal direct referrals, overriding the PDF row that displayed one direct.
 - Pool turnover is `team size × ID amount`. The next level's ID amount is consumed for auto-upgrade, and the balance is queued 80% to the achiever, 10% to U1, and 10% across U2–U9.
 - An inactive or missing upline is not compressed or replaced. Its unqueued share stays in the matching reserve.
 - Exact pool entitlements remain queued until the matching reserve and rank cap can cover the queued amount. Queued entitlements are not included in contract liabilities before settlement.
