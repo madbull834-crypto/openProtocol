@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Download, MessageCircle, QrCode, Send, Share2, X } from "lucide-react";
+import { ArrowRight, Check, Copy, Download, Lock, MessageCircle, QrCode, Send, Share2, X } from "lucide-react";
 import QRCode from "qrcode";
 import type { Address } from "viem";
 
@@ -63,6 +63,38 @@ export function ReferralShare({ address, memberId }: { address: Address; memberI
           {qr ? <img src={qr} alt="QR code for your referral link"/> : <div className="ref-qr-placeholder"><QrCode size={42}/></div>}
           <p>Scan to join with your link</p>
           {qr && <a className="ref-qr-download" href={qr} download="open-protocol-referral-qr.png"><Download size={13}/> Download QR</a>}
+        </div>
+      </div>
+    </div>
+  </section>;
+}
+
+/** Shown to visitors who aren't registered: the referral tools are locked until they join. */
+export function ReferralJoinPrompt({ connected, onJoin }: { connected: boolean; onJoin: () => void }) {
+  return <section className="ref-share">
+    <div className="wrap-wide">
+      <div className="ref-share-card locked">
+        <div className="ref-share-copy">
+          <small><Lock size={11}/> REFERRAL LINK LOCKED</small>
+          <h2>Join to get your referral link.</h2>
+          <p>{connected
+            ? "This wallet isn't registered yet. Register once and you'll get a personal link to share on WhatsApp, Telegram or by QR code. Everyone who joins through it becomes your direct referral."
+            : "Connect your wallet and register to unlock a personal link you can share on WhatsApp, Telegram or by QR code. Everyone who joins through it becomes your direct referral."}</p>
+          <div className="ref-share-link" aria-hidden="true">
+            <code className="ref-blur">{location.origin}/?ref=0x••••••••••••••••••••••••••••••••••••••••</code>
+            <button onClick={onJoin} tabIndex={-1}><Lock size={14}/> Locked</button>
+          </div>
+          <div className="ref-share-actions">
+            <button className="ref-join" onClick={onJoin}>{connected ? "Join now to unlock" : "Join to unlock"} <ArrowRight size={15}/></button>
+            <span className="ref-locked-chip"><MessageCircle size={14}/> WhatsApp</span>
+            <span className="ref-locked-chip"><Send size={14}/> Telegram</span>
+            <span className="ref-locked-chip"><QrCode size={14}/> QR code</span>
+            <span className="ref-locked-chip"><Copy size={14}/> Copy link</span>
+          </div>
+        </div>
+        <div className="ref-share-qr ref-qr-locked">
+          <div className="ref-qr-placeholder"><QrCode size={42}/><span><Lock size={18}/></span></div>
+          <p>Your QR code appears after you join</p>
         </div>
       </div>
     </div>

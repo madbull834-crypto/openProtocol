@@ -11,7 +11,7 @@ import { formatToken, shortAddress } from "./utils/format";
 import { useMatrixTree, type MatrixNode } from "./matrix";
 import { incomeName, incomeStreams, useDirectReferrals, useIncomeHistory } from "./income";
 import { Landing } from "./Landing";
-import { ReferralShare } from "./ReferralShare";
+import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
 
 const allocation = [
   { name: "Working pool", value: 15, tone: "blue", note: "Funds direct-referral and upline income across the working levels." },
@@ -59,8 +59,10 @@ export default function App() {
     : [["overview", "Home"], ["participate", "Join"], ["referrals", "Network"], ["mechanics", "Mechanics"]] as const;
 
   const member = isRegistered && address && participant ? { address, id: participant.id } : undefined;
+  // Ask to join only once we know the wallet isn't a member, so registered users don't see a flash of the locked card.
+  const joinPrompt = !member && (!address || participant !== undefined) ? { connected: Boolean(address), onJoin: () => setView("participate") } : undefined;
 
-  if (view === "landing") return <Landing memberCount={memberCount} total={total} ticket={ticket} member={member} onLaunch={() => setView(isRegistered ? "referrals" : "overview")}/>;
+  if (view === "landing") return <Landing memberCount={memberCount} total={total} ticket={ticket} member={member} joinPrompt={joinPrompt} onLaunch={() => setView(isRegistered ? "referrals" : "overview")}/>;
 
   return <div className="shell">
     <header className="globalnav">
@@ -77,7 +79,7 @@ export default function App() {
 
     <main>
       <AnimatePresence mode="wait">
-        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} registered={isRegistered} member={member} onParticipate={() => setView("participate")} onDashboard={() => setView("referrals")} onMechanics={() => setView("mechanics")}/>}
+        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} registered={isRegistered} member={member} joinPrompt={joinPrompt} onParticipate={() => setView("participate")} onDashboard={() => setView("referrals")} onMechanics={() => setView("mechanics")}/>}
         {view === "participate" && <Participate
           key="participate"
           address={address}
@@ -148,7 +150,7 @@ const features = [
   { icon: WalletCards, title: "Self-custody", copy: "Funds move only from your own wallet, only with your approval, and rewards are claimed straight back to it." },
 ];
 
-function Overview({ memberCount, total, ticket, invariant, registered, member, onParticipate, onDashboard, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; registered: boolean; member?: { address: Address; id: bigint }; onParticipate: () => void; onDashboard: () => void; onMechanics: () => void }) {
+function Overview({ memberCount, total, ticket, invariant, registered, member, joinPrompt, onParticipate, onDashboard, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; registered: boolean; member?: { address: Address; id: bigint }; joinPrompt?: { connected: boolean; onJoin: () => void }; onParticipate: () => void; onDashboard: () => void; onMechanics: () => void }) {
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   const primary = registered ? { label: "Open dashboard", onClick: onDashboard } : { label: "Get started", onClick: onParticipate };
   const price = ticket === undefined ? "25" : formatToken(ticket);
@@ -172,7 +174,7 @@ function Overview({ memberCount, total, ticket, invariant, registered, member, o
       </div>
     </section>
 
-    {member && <ReferralShare address={member.address} memberId={member.id}/>}
+    {member ? <ReferralShare address={member.address} memberId={member.id}/> : joinPrompt && <ReferralJoinPrompt {...joinPrompt}/>}
 
     <section className="overview-proof">
       <div className="wrap-wide proof-grid">

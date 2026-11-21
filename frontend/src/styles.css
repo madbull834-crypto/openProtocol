@@ -891,3 +891,16 @@ i.dev{background:linear-gradient(90deg,#1477d6,var(--blue))}
   .ref-share-qr.open{display:flex}
   .ref-qr-close{display:grid;place-items:center;position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.08);color:var(--ink)}
 }
+
+/* Locked referral card for visitors who haven't joined */
+.ref-share-card.locked{background:radial-gradient(600px 260px at 0 0,rgba(139,92,246,.16),transparent 70%),linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02))}
+.ref-share-card.locked .ref-share-copy small{display:inline-flex;align-items:center;gap:6px;color:var(--purple)}
+.ref-blur{filter:blur(3.5px);user-select:none}
+.ref-share-card.locked .ref-share-link button{opacity:.55;cursor:default}
+.ref-share-actions .ref-join{border:none;background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;box-shadow:0 8px 22px rgba(10,108,255,.25)}
+.ref-share-actions .ref-join:hover{background:linear-gradient(135deg,var(--g1),var(--g2));filter:brightness(1.08)}
+.ref-locked-chip{display:inline-flex;align-items:center;gap:7px;padding:10px 14px;border-radius:999px;border:1px dashed var(--line);color:var(--ink-3);font-size:13px;font-weight:600;opacity:.7}
+.ref-qr-locked .ref-qr-placeholder{position:relative;background:repeating-linear-gradient(45deg,#e9edf5 0 8px,#f7f8fb 8px 16px);filter:none}
+.ref-qr-locked .ref-qr-placeholder>svg{opacity:.35}
+.ref-qr-locked .ref-qr-placeholder span{position:absolute;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:#03050c;color:#fff}
+@media (max-width:860px){.ref-share-qr.ref-qr-locked{display:none}}
