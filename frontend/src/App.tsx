@@ -11,6 +11,7 @@ import { formatToken, shortAddress } from "./utils/format";
 import { useMatrixTree, type MatrixNode } from "./matrix";
 import { incomeName, incomeStreams, useDirectReferrals, useIncomeHistory } from "./income";
 import { Landing } from "./Landing";
+import { ReferralShare } from "./ReferralShare";
 
 const allocation = [
   { name: "Working pool", value: 15, tone: "blue", note: "Funds direct-referral and upline income across the working levels." },
@@ -57,7 +58,9 @@ export default function App() {
     ? [["overview", "Home"], ["referrals", "Dashboard"], ["mechanics", "Mechanics"]] as const
     : [["overview", "Home"], ["participate", "Join"], ["referrals", "Network"], ["mechanics", "Mechanics"]] as const;
 
-  if (view === "landing") return <Landing memberCount={memberCount} total={total} ticket={ticket} onLaunch={() => setView(isRegistered ? "referrals" : "overview")}/>;
+  const member = isRegistered && address && participant ? { address, id: participant.id } : undefined;
+
+  if (view === "landing") return <Landing memberCount={memberCount} total={total} ticket={ticket} member={member} onLaunch={() => setView(isRegistered ? "referrals" : "overview")}/>;
 
   return <div className="shell">
     <header className="globalnav">
@@ -74,7 +77,7 @@ export default function App() {
 
     <main>
       <AnimatePresence mode="wait">
-        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} registered={isRegistered} onParticipate={() => setView("participate")} onDashboard={() => setView("referrals")} onMechanics={() => setView("mechanics")}/>}
+        {view === "overview" && <Overview key="overview" memberCount={memberCount} total={total} ticket={ticket} invariant={invariant} registered={isRegistered} member={member} onParticipate={() => setView("participate")} onDashboard={() => setView("referrals")} onMechanics={() => setView("mechanics")}/>}
         {view === "participate" && <Participate
           key="participate"
           address={address}
@@ -145,7 +148,7 @@ const features = [
   { icon: WalletCards, title: "Self-custody", copy: "Funds move only from your own wallet, only with your approval, and rewards are claimed straight back to it." },
 ];
 
-function Overview({ memberCount, total, ticket, invariant, registered, onParticipate, onDashboard, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; registered: boolean; onParticipate: () => void; onDashboard: () => void; onMechanics: () => void }) {
+function Overview({ memberCount, total, ticket, invariant, registered, member, onParticipate, onDashboard, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; registered: boolean; member?: { address: Address; id: bigint }; onParticipate: () => void; onDashboard: () => void; onMechanics: () => void }) {
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   const primary = registered ? { label: "Open dashboard", onClick: onDashboard } : { label: "Get started", onClick: onParticipate };
   const price = ticket === undefined ? "25" : formatToken(ticket);
@@ -168,6 +171,8 @@ function Overview({ memberCount, total, ticket, invariant, registered, onPartici
         </div>
       </div>
     </section>
+
+    {member && <ReferralShare address={member.address} memberId={member.id}/>}
 
     <section className="overview-proof">
       <div className="wrap-wide proof-grid">

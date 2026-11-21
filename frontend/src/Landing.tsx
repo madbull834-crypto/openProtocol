@@ -4,6 +4,8 @@ import type { LucideIcon } from "lucide-react";
 import { explorerUrl, protocolAddress } from "./config";
 import { incomeStreams } from "./income";
 import { formatToken } from "./utils/format";
+import { ReferralShare } from "./ReferralShare";
+import type { Address } from "viem";
 
 const streamIcons: Record<string, LucideIcon> = {
   DIRECT_INCOME: UserPlus,
@@ -46,7 +48,7 @@ const faqs = [
 
 const reveal = { initial: { opacity: 0, y: 18 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, margin: "-60px" }, transition: { duration: .5, ease: [.25, .1, .25, 1] } } as const;
 
-export function Landing({ memberCount, total, ticket, onLaunch }: { memberCount?: bigint; total?: bigint; ticket?: bigint; onLaunch: () => void }) {
+export function Landing({ memberCount, total, ticket, member, onLaunch }: { memberCount?: bigint; total?: bigint; ticket?: bigint; member?: { address: Address; id: bigint }; onLaunch: () => void }) {
   const price = ticket === undefined ? "25" : formatToken(ticket);
   const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -81,6 +83,8 @@ export function Landing({ memberCount, total, ticket, onLaunch }: { memberCount?
         </motion.div>
       </div>
     </section>
+
+    {member && <ReferralShare address={member.address} memberId={member.id}/>}
 
     <section className="lp-stats">
       <div className="wrap-wide lp-stats-grid">
