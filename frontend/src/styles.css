@@ -805,7 +805,7 @@ i.dev{background:linear-gradient(90deg,#1477d6,var(--blue))}
   .globalnav nav{order:3;width:100%;display:grid;grid-auto-flow:column;grid-auto-columns:1fr}
   .globalnav nav button{padding:9px 6px;text-align:center}
   /* Dashboard tabs: equal thirds, no clipping */
-  .db-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;overflow:visible}
+  .db-tabs{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;overflow:visible}
   .db-tabs button{justify-content:center;padding:11px 6px;font-size:13px;gap:6px}
   /* Network switcher: 2 x 2 */
   .db-seg{grid-template-columns:1fr 1fr}

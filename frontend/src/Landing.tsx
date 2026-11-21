@@ -22,7 +22,7 @@ const streamIcons: Record<string, LucideIcon> = {
 const split = [
   { name: "Working pool", value: 15, tone: "blue", note: "Direct and ten-level upline income" },
   { name: "Non-working pool", value: 9, tone: "green", note: "Matrix placement and non-working uplines" },
-  { name: "Five-Star club", value: 1, tone: "gold", note: "Royalty shared by Five-Star members" },
+  { name: "Royalty Club", value: 1, tone: "gold", note: "Club income shared by Five-Star members" },
 ];
 
 const pillars = [

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { ArrowRight, ArrowUpRight, Award, Calendar, Check, ChevronRight, Clock, Coins, Copy, ExternalLink, Eye, Fuel, Layers, LayoutGrid, Lock, MessageCircle, Network, Send, Share2, ShieldCheck, TrendingUp, UserRoundCheck, Users, Wallet, WalletCards, Zap } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Award, Calendar, Check, ChevronRight, Clock, Coins, Copy, Crown, ExternalLink, Eye, Fuel, Layers, LayoutGrid, Lock, MessageCircle, Network, Send, Share2, ShieldCheck, TrendingUp, UserRoundCheck, Users, Wallet, WalletCards, Zap } from "lucide-react";
 import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress, type Address } from "viem";
 import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
@@ -16,7 +16,7 @@ import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
 const allocation = [
   { name: "Working pool", value: 15, tone: "blue", note: "Funds direct-referral and upline income across the working levels." },
   { name: "Non-working pool", value: 9, tone: "green", note: "Funds matrix income paid to the matrix parent and uplines, independent of referrals." },
-  { name: "Five-star club", value: 1, tone: "purple", note: "Reserved for members who reach the five-star rank, shared per achievement." },
+  { name: "Royalty Club", value: 1, tone: "purple", note: "Reserved as club income for Five-Star members and shared by achievement weight." },
 ];
 
 const configured = Boolean(protocolAddress);
@@ -463,7 +463,7 @@ const teamRequirements = [0, 0, 16, 64, 300, 1_000];
 
 const isMember = (participant?: { id: bigint }) => Boolean(participant?.id);
 
-/** Mirrors `claim()`: 17% to the Five-Star club and 3% to development are taken from the gross amount. */
+/** Mirrors `claim()`: 17% to the Royalty Club and 3% to development are taken from the gross amount. */
 function claimFees(gross?: bigint) {
   const value = gross ?? 0n;
   const royalty = value * 1_700n / 10_000n;
@@ -584,7 +584,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const historyIncomplete = Boolean(history.data && creditedIncome !== undefined && BigInt(history.data.lifetimeCredited) - BigInt(history.data.claims.gross) < creditedIncome);
   const historyAmount = (reason: string) => history.data ? BigInt(history.data.totals[reason]?.amount ?? "0") : undefined;
 
-  const [tab, setTab] = useState<"overview" | "earnings" | "network">("overview");
+  const [tab, setTab] = useState<"overview" | "earnings" | "network" | "royalty">("overview");
   const [copied, setCopied] = useState<"link" | "address">();
   const [networkView, setNetworkView] = useState<"matrix" | "working" | "nonworking" | "single">("matrix");
   const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "";
@@ -634,7 +634,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     </motion.div>;
   }
 
-  const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network]] as const;
+  const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network], ["royalty", "Royalty Income", Crown]] as const;
   const poolInfo = {
     single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
     working: { name: "Working", note: "A new level every 2 team members", tone: "green", Icon: Layers, level: working ?? 0, max: 8 },
@@ -655,6 +655,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const earnedStreams = streamRows.filter(row => row.amount > 0n).sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0));
   const idleStreams = streamRows.filter(row => row.amount === 0n);
   const sourceTotal = earnedStreams.reduce((sum, row) => sum + row.amount, 0n);
+  const royaltyLifetime = historyAmount("FIVE_STAR_ROYALTY") ?? 0n;
+  const royaltyPayments = history.data?.totals.FIVE_STAR_ROYALTY?.count ?? 0;
+  const royaltyActivity = history.data?.recent.filter(item => item.reason === "FIVE_STAR_ROYALTY") ?? [];
   const teamIncomeCard = <section className="ti">
     <div className="ti-hero">
       <div className="ti-headline">
@@ -756,7 +759,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <div><div><span>Direct referrals</span><b>{Math.min(directCount, directNeed)} / {directNeed}</b></div><div className="db-bar"><i style={{ width: `${directProgress}%` }}/></div><small>{directCount >= directNeed ? "Done" : `${directNeed - directCount} more needed`}</small></div>
               <div><div><span>Team size</span><b>{Math.min(teamCount, teamNeed)} / {teamNeed}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div><small>{teamCount >= teamNeed ? "Done" : `${teamNeed - teamCount} more needed`}</small></div>
             </div>}
-            <p className="db-foot-note">{topRank ? "Your Five-Star share keeps growing with your team." : "Both requirements must be met before the contract upgrades your rank."}</p>
+            <p className="db-foot-note">{topRank ? "Your Royalty Club income keeps growing with your team." : "Both requirements must be met before the contract upgrades your rank."}</p>
           </div>
 
           <div className="db-card">
@@ -764,7 +767,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <ul className="db-rows db-snap">
               <li><span><em className="snap-icon green"><Wallet size={14}/></em>Available to withdraw</span><b>{formatToken(withdrawable)} <small>USDT</small></b></li>
               <li><span><em className="snap-icon blue"><Layers size={14}/></em>Team income in pools</span><b>{formatToken(queued)} <small>USDT</small></b></li>
-              <li><span><em className="snap-icon purple"><Award size={14}/></em>Five-Star royalty</span><b>{formatToken(pendingFiveStar)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon purple"><Award size={14}/></em>Royalty Club income</span><b>{formatToken(pendingFiveStar)} <small>USDT</small></b></li>
             </ul>
             <div className="db-placement"><span>Matrix parent</span><b className="mono">{placement === undefined ? "—" : placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b><button className="db-text-btn" onClick={() => setTab("network")}>View network <ChevronRight size={14}/></button></div>
           </div>
@@ -837,15 +840,15 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <div className="fee-split"><i className="you" style={{ width: "80%" }}><span>80%</span></i><i className="club" style={{ width: "17%" }}><span>17%</span></i><i className="dev" style={{ width: "3%" }}/></div>
             <ul className="fee-rows">
               <li><span><i className="you"/>You receive</span><b>{formatToken(fees.net)} USDT</b></li>
-              <li><span><i className="club"/>Five-Star club · 17%</span><b>{formatToken(fees.royalty)} USDT</b></li>
+              <li><span><i className="club"/>Royalty Club · 17%</span><b>{formatToken(fees.royalty)} USDT</b></li>
               <li><span><i className="dev"/>Development fund · 3%</span><b>{formatToken(fees.development)} USDT</b></li>
             </ul>
             <div className="fee-total"><span>Next withdrawal</span><b>{formatToken(withdrawable)} <em>USDT</em></b></div>
             {history.data && history.data.claims.count > 0 && <p className="db-foot-note">So far you've withdrawn {formatToken(BigInt(history.data.claims.gross))} USDT and received {formatToken(BigInt(history.data.claims.net))} USDT.</p>}
           </div>
           <div className="db-card db-club">
-            <div className="db-section-head"><div><small>FIVE-STAR CLUB</small><h3>{currentRank >= 5 ? "You're in the club" : "Royalty share"}</h3></div><span className="club-badge"><Award size={14}/> 5 Star</span></div>
-            <div className="club-amount"><small>Royalty waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>Added to your balance automatically when you withdraw</span></div>
+            <div className="db-section-head"><div><small>ROYALTY CLUB INCOME</small><h3>{currentRank >= 5 ? "You're earning club income" : "Unlock your club share"}</h3></div><span className="club-badge"><Award size={14}/> 5 Star</span></div>
+            <div className="club-amount"><small>Club income waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>Your weighted share is added to your balance automatically when you withdraw</span></div>
             {currentRank < 5 ? <div className="club-reqs">
               <div><div><span>Direct referrals</span><b>{Math.min(directCount, 16)} / 16</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directCount / 16 * 100)}%` }}/></div></div>
               <div><div><span>Team size</span><b>{Math.min(teamCount, 1000).toLocaleString()} / 1,000</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, teamCount / 10)}%` }}/></div></div>
@@ -871,6 +874,50 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         {networkView === "working" && <WorkingTree address={address} team={team} currentLevel={working}/>}
         {networkView === "nonworking" && <NonWorkingTree address={address} team={team} currentLevel={nonWorking}/>}
         {networkView === "single" && <SingleLegTree address={address} team={team} directs={participant?.directCount} currentLevel={singleLeg}/>}
+      </div>}
+
+      {tab === "royalty" && <div className="db-stack">
+        <div className="db-summary">
+          <div className="primary"><span className="db-sum-icon"><Crown size={16}/></span><small>Royalty income waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>{currentRank >= 5 ? "Your live, unsettled Royalty Club share" : "Unlocks when you reach the Five-Star rank"}</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
+          <div><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime royalty income</small><b>{history.data ? formatToken(royaltyLifetime) : "—"} <em>USDT</em></b><span>{history.data ? `${royaltyPayments} credited ${royaltyPayments === 1 ? "payment" : "payments"}` : "History service unavailable"}</span></div>
+          <div><span className="db-sum-icon"><Award size={16}/></span><small>Your royalty weight</small><b>{fiveStarWeight?.toString() ?? "—"}</b><span>One weight at 1,000 team members, then one more per additional 1,000</span></div>
+        </div>
+        {actionError && <p className="db-error">{actionError}</p>}
+
+        <div className="db-two">
+          <div className="db-card db-club">
+            <div className="db-section-head"><div><small>ROYALTY CLUB STATUS</small><h3>{currentRank >= 5 ? "Your club income is active" : "Qualify for Royalty Income"}</h3></div><span className="club-badge"><Crown size={14}/> 5 Star</span></div>
+            <div className="club-amount"><small>Current rank</small><b>{rankNames[currentRank]}</b><span>Royalty Club income is distributed by achievement weight among eligible Five-Star members.</span></div>
+            {currentRank < 5 ? <div className="club-reqs">
+              <div><div><span>Direct referrals</span><b>{Math.min(directCount, 16)} / 16</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directCount / 16 * 100)}%` }}/></div></div>
+              <div><div><span>Qualified team</span><b>{Math.min(teamCount, 1000).toLocaleString()} / 1,000</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, teamCount / 10)}%` }}/></div></div>
+            </div> : <p className="db-foot-note">Your weight increases automatically whenever your qualified team reaches another 1,000-member milestone.</p>}
+          </div>
+
+          <div className="db-card db-fee">
+            <div className="db-section-head"><div><small>HOW IT IS FUNDED</small><h3>Two sources, one weighted club</h3></div></div>
+            <ul className="fee-rows">
+              <li><span><i className="club"/>Every registration</span><b>1 USDT</b></li>
+              <li><span><i className="club"/>Every reward withdrawal</span><b>17%</b></li>
+              <li><span><i className="you"/>Eligibility</span><b>Five-Star rank</b></li>
+              <li><span><i className="dev"/>Distribution</span><b>By club weight</b></li>
+            </ul>
+            <div className="fee-total"><span>Claim behavior</span><b>Automatic</b></div>
+            <p className="db-foot-note">Your pending club share is settled into your claimable balance when you withdraw. The same 80% user, 17% club and 3% development split then applies.</p>
+          </div>
+        </div>
+
+        <div className="db-card">
+          <div className="db-section-head"><div><small>ROYALTY ACTIVITY</small><h3>Your latest club income</h3></div>{history.data && <span className="db-tag">{royaltyPayments} total</span>}</div>
+          {history.isLoading && <div className="src-skeleton"><i/><i/></div>}
+          {history.isError && <p className="db-warn">Royalty history is unavailable right now. Your pending amount above is read directly from the contract.</p>}
+          {history.data && royaltyActivity.length === 0 && <p className="db-empty-note">No Royalty Club income has been credited yet.</p>}
+          {royaltyActivity.length > 0 && <ul className="act-list">{royaltyActivity.slice(0, 10).map(item => <li key={`${item.txHash}-${item.amount}`}>
+            <span className="act-icon"><Crown size={15}/></span>
+            <div><b>Royalty Club income</b><small>Block {Number(item.blockNumber).toLocaleString()} · <span className="mono">{item.txHash.slice(0, 10)}…</span></small></div>
+            <a href={`${explorerUrl}/tx/${item.txHash}`} target="_blank" rel="noreferrer">+{formatToken(BigInt(item.amount))} <em>USDT</em> <ExternalLink size={12}/></a>
+          </li>)}</ul>}
+        </div>
       </div>}
     </div></section>
   </motion.div>;
@@ -1075,7 +1122,7 @@ function Mechanics() { return <motion.div {...fade}>
     <section className="band gray">
       <div className="wrap-wide bento three">{[
         ["A single $25 ticket.", "The source document defines one USDT ticket, settled on BNB Smart Chain."],
-        ["Allocation to the dollar.", "$15 to the working pool, $9 to the non-working pool, $1 to the five-star club. Enforced on every ticket."],
+        ["Allocation to the dollar.", "$15 to the working pool, $9 to the non-working pool, $1 to the Royalty Club. Enforced on every ticket."],
         ["Sponsorship, written once.", "A wallet registers once, against an existing sponsor. The record never changes."],
         ["No one holds the keys.", "The implemented core has no owner, no upgrade path, no pause switch and no rescue authority."],
         ["A reward engine for testnet.", "Matrix income, uplines, levels, ranks, re-entry, weekly rewards and claims run on documented prototype assumptions."],

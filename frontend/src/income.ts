@@ -27,7 +27,11 @@ export const incomeStreams = [
   { reason: "REENTRY", name: "Re-entry income", note: "From completed pool re-entries" },
   { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "Weekly reward for the top direct recruiter" },
   { reason: "POOL_LEVEL_INCOME", name: "Team income", note: "Single-Leg, Working and Non-Working pools moved to your balance" },
-  { reason: "FIVE_STAR_ROYALTY", name: "Five-Star royalty", note: "Your share of the Five-Star club" },
+  {
+    reason: "FIVE_STAR_ROYALTY",
+    name: "Royalty Club income",
+    note: "Five-Star members' weighted share of the $1 club allocation and 17% withdrawal royalty",
+  },
 ] as const;
 
 export const incomeName = (reason: string) => incomeStreams.find((s) => s.reason === reason)?.name ?? "Other reward";
