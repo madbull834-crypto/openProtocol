@@ -8,15 +8,15 @@ Source: *Community Funding Protocol*, 27 pages, supplied 2026-11-11. Page refere
 - A $25 participation ticket feeds a single-leg pool and an active “2+2 Global Matrix” (pp. 6, 8).
 - Transactions use USDT (BEP-20), which selects BNB Smart Chain (p. 26).
 - The weekly cycle closes every Sunday; the document does not define timezone or exact boundary (p. 26).
-- No owner or admin and no centralized control are claimed (pp. 3, 26). Production contracts must therefore use immutable configuration or fully specified autonomous rules.
+- No owner or admin and no centralized control are claimed in the source (pp. 3, 26). The requested implementation instead uses a disclosed, owner-controlled UUPS upgrade mechanism; production governance must define and secure that authority.
 
 ## Unambiguous financial rules
 
 | Trigger | Allocation | Amount | Source |
 |---|---|---:|---|
-| Participation | Working pool | $15 USDT | pp. 8, 26 |
-| Participation | Non-working pool | $9 USDT | pp. 8, 26 |
-| Participation | Lifetime five-star club | $1 USDT | pp. 8, 26 |
+| Participation | Working Matrix | $15 USDT | confirmed business rule |
+| Participation | Single-Leg reserve | $9 USDT | confirmed business rule |
+| Participation | Weekly Superstar fund | $1 USDT | confirmed business rule |
 | Withdrawal | User wallet | 80% | pp. 18, 26 |
 | Withdrawal | Royalty/club fund | 17% | pp. 18, 26 |
 | Withdrawal | Development and maintenance | 3% | pp. 18, 26 |
@@ -30,24 +30,26 @@ The implementation now includes deterministic rules where the source PDF is inco
 - Matrix placement is one global breadth-first binary queue. Sponsorship and placement are separate.
 - Team size counts sponsor descendants up to ten sponsor levels.
 - The first two directs activate a sponsor and their 80% working shares become locked auto-upgrade reserve. From the third direct onward, that 80% (12 USDT) is claimable by the sponsor.
-- Remaining working funds use the original ten-level schedule: 10%, 4%, 2%, then 0.5% at levels 4–10. The remaining 0.5% stays reserved. Non-working registration funds remain 80% to the matrix parent, 10% to U1, and 10% shared by U2–U9.
-- The single-leg thresholds and exact income/extra/U1/U2 values from levels 1–10 are encoded. Working levels use ID amounts 15, 15, 30, …, 960; non-working levels use 5, 5, 10, …, 40,960.
+- The remaining Working Matrix allocation pays the sponsor's uplines at 10%, 4%, 2%, then 0.5% at levels 4–9. The remaining 1% stays in the Working reserve. Missing or inactive uplines are not replaced.
+- The 9 USDT registration allocation funds Single-Leg. Level 2 pays 15 USDT net and redirects 5 USDT into the member's Non-Working Matrix entry. Level 3 pays 26 USDT net and uses 9 USDT for an automatic second Single-Leg entry.
+- The confirmed Single-Leg thresholds are Level 1 at 10 team/1 direct, Level 2 at 15 team/1 direct and Level 3 at 30 team/2 directs. Levels 4–10 retain the existing published table.
 - Business clarification: Single-Leg Level 3 requires Levels 1 and 2 to have completed sequentially and at least two personal direct referrals, overriding the PDF row that displayed one direct.
 - Pool turnover is `team size × ID amount`. The next level's ID amount is consumed for auto-upgrade, and the balance is queued 80% to the achiever, 10% to U1, and 10% across U2–U9.
 - An inactive or missing upline is not compressed or replaced. Its unqueued share stays in the matching reserve.
 - Exact pool entitlements remain queued until the matching reserve and rank cap can cover the queued amount. Queued entitlements are not included in contract liabilities before settlement.
-- Working re-entry occurs every 16 team members and non-working re-entry every 30, funded only when the matching reserve is sufficient.
-- Star direct/team thresholds are 4/0, 8/16, 12/64, 16/300, and 16/1,000. Pool earning caps are 2× before star rank, then 5×, 10×, 50×, and uncapped at ranks four and five.
-- Five-star members receive one royalty weight at 1,000 team members and another weight for every additional 1,000-member achievement. Club and royalty funds use a weighted accumulator.
-- Weeks are Unix/UTC periods, and the earliest highest direct count wins 10% of available working reserve.
+- Non-working re-entry occurs every 30 team members, funded only when the Non-Working reserve is sufficient.
+- Every registered member starts at One Star. Two Star requires four directs; Three Star requires 16 team members at Single-Leg Level 2; Four Star requires 64 at Level 3; Five Star requires 300 at Level 4. Caps are respectively 2×, 5×, 10×, 50× and unlimited.
+- Five-Star members receive one royalty weight on qualification and another weight for every additional 1,000-member achievement. The 17% withdrawal royalty uses a weighted accumulator.
+- Each registration adds 1 USDT to the Weekly Superstar reserve. The earliest highest recruiter with at least five directs wins the accumulated fund when the completed Unix/UTC week is closed; otherwise it rolls forward.
 - Claims pay 80% to the user, 17% to five-star royalty or the club vault, and 3% to the immutable development address.
 - Credits are backed by USDT held by the contract; rewards are never minted.
+- Deployment uses an ERC-1967 UUPS proxy. Initialization is one-time, direct implementation initialization is disabled, upgrades require the proxy owner, and future implementations must preserve the validated storage layout.
 
 ## Registration and onboarding
 
 - A participant connects a wallet, approves exactly one $25-equivalent ticket in the configured USDT token, and registers with a previously registered sponsor.
 - Duplicate registration, zero-address participants, self-sponsorship, and unknown sponsors must revert.
-- A single immutable genesis account is registered during deployment so the first external participant has a valid sponsor.
+- A single genesis account is registered during proxy initialization so the first external participant has a valid sponsor.
 - Sponsor relationships are permanent. This is the minimal safe interpretation needed to represent a referral graph; matrix placement is not inferred from sponsorship.
 
 ## Pool tables transcribed from the PDF
@@ -57,8 +59,8 @@ The implementation now includes deterministic rules where the source PDF is inco
 | Level | Members | Directs | Pool income | Extra | Upline | Upline 2 / super-upline |
 |---:|---:|---:|---:|---|---:|---:|
 | 1 | 10 | 1 | $10 | $5 global-pool re-entry | $1 | $1 |
-| 2 | 15 | 1 | $15 | — | $2 | $2 |
-| 3 | 30 | 1 | $35 | $9 one-time re-entry | $3 | $3 |
+| 2 | 15 | 1 | $15 net | $5 Non-Working Matrix redirect | $2 | $2 |
+| 3 | 30 | 2 | $26 net | $9 automatic Single-Leg re-entry | $3 | $3 |
 | 4 | 60 | 2 | $50 | — | $5 | $5 |
 | 5 | 250 | 2 | $150 | — | $10 | $10 |
 | 6 | 600 | 3 | $500 | — | $30 | $30 |

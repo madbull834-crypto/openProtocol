@@ -1,4 +1,5 @@
 import "@nomicfoundation/hardhat-toolbox";
+import "@openzeppelin/hardhat-upgrades";
 import "solidity-coverage";
 import { config as loadEnv } from "dotenv";
 import path from "node:path";

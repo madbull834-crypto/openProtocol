@@ -20,9 +20,9 @@ const streamIcons: Record<string, LucideIcon> = {
 };
 
 const split = [
-  { name: "Working pool", value: 15, tone: "blue", note: "Direct and ten-level upline income" },
-  { name: "Non-working pool", value: 9, tone: "green", note: "Matrix placement and non-working uplines" },
-  { name: "Royalty Club", value: 1, tone: "gold", note: "Club income shared by Five-Star members" },
+  { name: "Working Matrix", value: 15, tone: "blue", note: "Direct and nine-level upline income" },
+  { name: "Single-Leg", value: 9, tone: "green", note: "Level rewards, redirect and automatic re-entry" },
+  { name: "Weekly Superstar", value: 1, tone: "gold", note: "Weekly recruiter reward fund" },
 ];
 
 const pillars = [
@@ -42,7 +42,7 @@ const steps = [
 const faqs = [
   ["What does it cost to join?", "One fixed registration of 25 USDT, paid once. On this testnet build you use free test USDT that has no monetary value."],
   ["Who holds the funds?", "No one. The contract splits each registration into its pools in the same transaction. There is no admin wallet and no manual custody."],
-  ["How are earnings paid?", "Rewards are credited on-chain under one of nine reason codes. Team income from the three pools is settled up to your cap, and everything is claimed to your own wallet."],
+  ["How are earnings paid?", `Rewards are credited on-chain under ${incomeStreams.length} income reason codes. Reserve-backed matrix income is settled up to your cap, and everything is claimed to your own wallet.`],
   ["Is this ready for real money?", "No. This is a testnet validation build. The contracts need an independent audit before production use, and the protocol promises no returns."],
 ] as const;
 
@@ -65,7 +65,7 @@ export function Landing({ memberCount, total, ticket, member, joinPrompt, onLaun
       <div className="wrap-wide lp-hero-grid">
         <motion.div className="lp-hero-copy" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .6 }}>
           <div className="environment-badge"><i/> LIVE ON BSC TESTNET</div>
-          <h1>One entry.<br/><span className="grad">Nine income streams.</span></h1>
+          <h1>One entry.<br/><span className="grad">{incomeStreams.length} income streams.</span></h1>
           <p className="lp-lede">Open Protocol is a community membership network on BNB Smart Chain. Every rule is written in immutable code, every payout is settled on-chain, and nobody holds your funds.</p>
           <div className="lp-actions">
             <button className="pill" onClick={onLaunch}>Get started <ArrowRight size={16}/></button>
@@ -97,7 +97,7 @@ export function Landing({ memberCount, total, ticket, member, joinPrompt, onLaun
 
     <section className="lp-section" id="earnings">
       <div className="wrap-wide">
-        <motion.div className="lp-head" {...reveal}><small>EARNINGS</small><h2>Nine ways rewards are credited.</h2><p>Each stream is a separate reason code in the contract, so every credit on your dashboard traces back to the rule that paid it.</p></motion.div>
+        <motion.div className="lp-head" {...reveal}><small>EARNINGS</small><h2>{incomeStreams.length} ways rewards are credited.</h2><p>Each stream is a separate reason code in the contract, so every credit on your dashboard traces back to the rule that paid it.</p></motion.div>
         <div className="lp-streams">{incomeStreams.map((s, i) => {
           const Icon = streamIcons[s.reason] ?? Award;
           return <motion.article key={s.reason} {...reveal} transition={{ ...reveal.transition, delay: (i % 3) * .06 }}>
@@ -105,7 +105,7 @@ export function Landing({ memberCount, total, ticket, member, joinPrompt, onLaun
             <h3>{s.name}</h3><p>{s.note}</p>
           </motion.article>;
         })}</div>
-        <p className="lp-footnote">Team income bundles the Single-Leg, Working and Non-Working pools, settled up to your pool cap.</p>
+        <p className="lp-footnote">Single-Leg and Non-Working Matrix rewards settle from their respective reserves up to your rank cap.</p>
       </div>
     </section>
 

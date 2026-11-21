@@ -19,18 +19,16 @@ export type DirectReferral = {
 
 /** Labels for every reason code the contract passes to `_credit`. */
 export const incomeStreams = [
-  { reason: "DIRECT_INCOME", name: "Direct income", note: "From members you personally referred" },
-  { reason: "TEN_LEVEL_UPLINE", name: "Ten-level upline", note: "From registrations up to ten levels below you" },
-  { reason: "MATRIX_INCOME", name: "Global Matrix", note: "From members placed under you in the matrix" },
-  { reason: "NONWORKING_U1", name: "Non-working U1", note: "From members you sponsored (non-working share)" },
-  { reason: "NONWORKING_UPLINE", name: "Non-working upline", note: "From uplines 2–9 of the non-working share" },
-  { reason: "REENTRY", name: "Re-entry income", note: "From completed pool re-entries" },
-  { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "Weekly reward for the top direct recruiter" },
-  { reason: "POOL_LEVEL_INCOME", name: "Team income", note: "Single-Leg, Working and Non-Working pools moved to your balance" },
+  { reason: "DIRECT_INCOME", name: "Working Matrix direct", note: "12 USDT from each direct referral after your first two" },
+  { reason: "TEN_LEVEL_UPLINE", name: "Working Matrix upline", note: "The 10%, 4%, 2% and 0.5% Working Matrix levels" },
+  { reason: "SINGLE_LEG_INCOME", name: "Single-Leg income", note: "Net level rewards moved from the Single-Leg reserve" },
+  { reason: "NON_WORKING_MATRIX_INCOME", name: "Non-Working Matrix", note: "Matrix rewards funded by the Level 2 redirect" },
+  { reason: "REENTRY", name: "Non-Working re-entry", note: "From completed Non-Working Matrix cycles" },
+  { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "The accumulated $1 registration fund for the weekly winner" },
   {
     reason: "FIVE_STAR_ROYALTY",
     name: "Royalty Club income",
-    note: "Five-Star members' weighted share of the $1 club allocation and 17% withdrawal royalty",
+    note: "Five-Star members' weighted share of the 17% withdrawal royalty",
   },
 ] as const;
 

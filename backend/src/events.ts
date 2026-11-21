@@ -32,7 +32,9 @@ export const REWARD_REASONS = [
   "NONWORKING_UPLINE",
   "REENTRY",
   "WEEKLY_SUPERSTAR",
-  "POOL_LEVEL_INCOME",
+  "SINGLE_LEG_INCOME",
+  "WORKING_LEVEL_INCOME",
+  "NON_WORKING_MATRIX_INCOME",
   "FIVE_STAR_ROYALTY",
 ] as const;
 export type RewardReason = (typeof REWARD_REASONS)[number];

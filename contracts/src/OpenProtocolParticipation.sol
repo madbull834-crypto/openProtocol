@@ -4,15 +4,19 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 /// @notice Testnet reference implementation. Assumptions are documented in REQUIREMENTS.md.
-contract OpenProtocolParticipation is ReentrancyGuard {
+contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
     uint256 private constant BPS = 10_000;
     uint256 private constant ACC = 1e24;
     uint256 private constant WEEK = 7 days;
     uint8 private constant MAX_UPLINE = 10;
+    uint8 private constant MAX_WORKING_UPLINE = 9;
 
     struct Participant { uint64 id; uint64 directCount; address sponsor; uint64 joinedAt; }
     struct WeeklyCompetition { address leader; uint64 winningDirects; bool closed; }
@@ -28,16 +32,16 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     error WeekAlreadyClosed(uint256 week);
     error InvalidLevel(uint8 level);
 
-    IERC20 public immutable paymentToken;
-    address public immutable workingPool;
-    address public immutable nonWorkingPool;
-    address public immutable fiveStarClub;
-    address public immutable developmentFund;
-    uint256 public immutable ticketPrice;
-    uint256 public immutable tokenUnit;
-    uint256 public immutable workingAllocation;
-    uint256 public immutable nonWorkingAllocation;
-    uint256 public immutable clubAllocation;
+    IERC20 public paymentToken;
+    address public workingPool;
+    address public nonWorkingPool;
+    address public fiveStarClub;
+    address public developmentFund;
+    uint256 public ticketPrice;
+    uint256 public tokenUnit;
+    uint256 public workingAllocation;
+    uint256 public nonWorkingAllocation;
+    uint256 public clubAllocation;
 
     uint64 public memberCount;
     uint64 public matrixCursor;
@@ -49,8 +53,10 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     uint256 public totalGrossRewards;
     uint256 public totalClaimedGross;
     uint256 public workingReserve;
+    uint256 public singleLegReserve;
     uint256 public nonWorkingReserve;
-    uint256 public clubReserve;
+    uint256 public pendingNonWorkingRedirect;
+    uint256 public superstarReserve;
     uint256 public fiveStarLiability;
     uint256 public accFiveStarRewardPerMember;
     uint256 public totalFiveStarWeight;
@@ -68,6 +74,10 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     mapping(address => uint8) public starRank;
     mapping(address => uint64) public workingReentries;
     mapping(address => uint64) public nonWorkingReentries;
+    mapping(address => uint64) public singleLegEntries;
+    mapping(address => uint64) public singleLegReentries;
+    mapping(address => uint256) public nonWorkingEntryCredit;
+    mapping(address => mapping(uint8 => uint64)) public qualifiedLevelTeamCount;
     mapping(address => uint256) public autoUpgradeCredit;
     mapping(address => uint256) public claimable;
     mapping(address => uint256) public fiveStarRewardDebt;
@@ -79,6 +89,10 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     mapping(address => uint256) public rankedPoolRewardsCredited;
     mapping(uint256 => mapping(address => uint64)) public weeklyDirects;
     mapping(uint256 => WeeklyCompetition) public weeklyCompetition;
+
+    // Storage reserved for future implementations. New state must be appended here
+    // and the gap reduced by the same number of slots.
+    uint256[50] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -92,19 +106,29 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     event PoolIncomeQueued(address indexed account, uint8 indexed pool, uint8 level, uint256 amount);
     event PoolIncomeSettled(address indexed account, uint256 singleLeg, uint256 working, uint256 nonWorking);
     event FiveStarWeightAdvanced(address indexed account, uint64 weight);
+    event SingleLegReentered(address indexed account, uint64 entry, uint256 amount);
+    event NonWorkingEntryFunded(address indexed account, uint256 amount);
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
         IERC20Metadata token_,
         address workingPool_,
         address nonWorkingPool_,
         address fiveStarClub_,
         address developmentFund_,
         address genesisParticipant_
-    ) {
+    ) public initializer {
         if (address(token_) == address(0) || workingPool_ == address(0) || nonWorkingPool_ == address(0)
             || fiveStarClub_ == address(0) || developmentFund_ == address(0) || genesisParticipant_ == address(0)) {
             revert ZeroAddress();
         }
+        __Ownable_init(msg.sender);
+        __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
         uint8 decimals = token_.decimals();
         if (decimals > 72) revert UnsupportedTokenDecimals(decimals);
         uint256 unit = 10 ** decimals;
@@ -120,10 +144,14 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         clubAllocation = unit;
         memberCount = 1;
         participants[genesisParticipant_] = Participant(1, 0, address(0), uint64(block.timestamp));
+        starRank[genesisParticipant_] = 1;
+        singleLegEntries[genesisParticipant_] = 1;
         memberById[1] = genesisParticipant_;
         matrixQueue[0] = genesisParticipant_;
         emit ParticipantRegistered(genesisParticipant_, address(0), 1, uint64(block.timestamp));
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function register(address sponsor) external nonReentrant {
         if (participants[msg.sender].id != 0) revert AlreadyRegistered(msg.sender);
@@ -134,6 +162,8 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         bool sponsorWasActive = participants[sponsor].directCount >= 2;
         uint64 newId = ++memberCount;
         participants[msg.sender] = Participant(newId, 0, sponsor, uint64(block.timestamp));
+        starRank[msg.sender] = 1;
+        singleLegEntries[msg.sender] = 1;
         participants[sponsor].directCount++;
         memberById[newId] = msg.sender;
         _placeInMatrix(msg.sender, newId);
@@ -145,9 +175,11 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         totalNonWorkingAllocated += nonWorkingAllocation;
         totalClubAllocated += clubAllocation;
         _allocateWorking(sponsor, sponsorWasActive);
-        _allocateNonWorking(msg.sender, sponsor);
-        _allocateClub();
+        singleLegReserve += nonWorkingAllocation;
+        _fundPendingNonWorkingRedirect();
+        superstarReserve += clubAllocation;
         emit ParticipantRegistered(msg.sender, sponsor, newId, uint64(block.timestamp));
+        emit RankAdvanced(msg.sender, 0, 1);
         emit ParticipationAllocated(msg.sender, workingAllocation, nonWorkingAllocation, clubAllocation);
     }
 
@@ -172,9 +204,9 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         if (competition.closed) revert WeekAlreadyClosed(week);
         competition.closed = true;
         uint256 reward;
-        if (competition.leader != address(0)) {
-            reward = workingReserve / 10;
-            workingReserve -= reward;
+        if (competition.leader != address(0) && competition.winningDirects >= 5) {
+            reward = superstarReserve;
+            superstarReserve = 0;
             _credit(competition.leader, reward, keccak256("WEEKLY_SUPERSTAR"));
         }
         emit WeekClosed(week, competition.leader, reward);
@@ -191,22 +223,24 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         uint256 credited = rankedPoolRewardsCredited[msg.sender];
         uint256 capacity = cap == type(uint256).max ? type(uint256).max : cap > credited ? cap - credited : 0;
 
-        uint256 singleAmount = _settleWorkingBacked(pendingSingleLegIncome, msg.sender, capacity);
+        uint256 singleAmount = _settleSingleLegBacked(msg.sender, capacity);
         capacity = capacity == type(uint256).max ? capacity : capacity - singleAmount;
         uint256 workingAmount = _settleWorkingBacked(pendingWorkingPoolIncome, msg.sender, capacity);
         capacity = capacity == type(uint256).max ? capacity : capacity - workingAmount;
         uint256 nonWorkingAmount = _settleNonWorkingBacked(msg.sender, capacity);
         uint256 total = singleAmount + workingAmount + nonWorkingAmount;
         rankedPoolRewardsCredited[msg.sender] += total;
-        _credit(msg.sender, total, keccak256("POOL_LEVEL_INCOME"));
+        _credit(msg.sender, singleAmount, keccak256("SINGLE_LEG_INCOME"));
+        _credit(msg.sender, workingAmount, keccak256("WORKING_LEVEL_INCOME"));
+        _credit(msg.sender, nonWorkingAmount, keccak256("NON_WORKING_MATRIX_INCOME"));
         emit PoolIncomeSettled(msg.sender, singleAmount, workingAmount, nonWorkingAmount);
     }
     function poolRewardCap(address account) public view returns (uint256) {
         uint8 rank = starRank[account];
-        if (rank >= 4) return type(uint256).max;
-        if (rank == 3) return ticketPrice * 50;
-        if (rank == 2) return ticketPrice * 10;
-        if (rank == 1) return ticketPrice * 5;
+        if (rank >= 5) return type(uint256).max;
+        if (rank == 4) return ticketPrice * 50;
+        if (rank == 3) return ticketPrice * 10;
+        if (rank == 2) return ticketPrice * 5;
         return ticketPrice * 2;
     }
     function workingLevelQuote(uint8 level)
@@ -241,7 +275,7 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         u2 = u1;
     }
     function tenLevelPercentageBps(uint8 level) external pure returns (uint256) {
-        if (level == 0 || level > 10) revert InvalidLevel(level);
+        if (level == 0 || level > 9) revert InvalidLevel(level);
         return _workingUplineBps(level - 1);
     }
     function withdrawable(address account) external view returns (uint256) {
@@ -258,7 +292,8 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     function solvencyInvariantHolds() external view returns (bool) {
         uint256 outstandingClaims = totalGrossRewards - totalClaimedGross;
         return paymentToken.balanceOf(address(this))
-            >= outstandingClaims + workingReserve + nonWorkingReserve + clubReserve + fiveStarLiability;
+            >= outstandingClaims + workingReserve + singleLegReserve + nonWorkingReserve + superstarReserve
+                + fiveStarLiability;
     }
 
     function _placeInMatrix(address account, uint64 position) private {
@@ -279,9 +314,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
             uint8 newWorking = uint8(newTeam / 2 > 8 ? 8 : newTeam / 2);
             uint8 newNonWorking = uint8(newTeam / 2 > 15 ? 15 : newTeam / 2);
             if (newWorking != oldWorking || newNonWorking != oldNonWorking) {
-                for (uint8 level = oldWorking + 1; level <= newWorking; ++level) {
-                    _queueWorkingLevel(account, level);
-                }
                 for (uint8 level = oldNonWorking + 1; level <= newNonWorking; ++level) {
                     _queueNonWorkingLevel(account, level);
                 }
@@ -289,7 +321,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
                 nonWorkingLevel[account] = newNonWorking;
                 emit LevelAdvanced(account, newWorking, newNonWorking);
             }
-            if (newTeam % 16 == 0) _reenter(account, true);
             if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
             _updateFiveStarWeight(account, newTeam);
@@ -300,13 +331,11 @@ contract OpenProtocolParticipation is ReentrancyGuard {
 
     function _updateRank(address account) private {
         uint64 directs = participants[account].directCount;
-        uint64 team = teamCount[account];
-        uint8 next;
-        if (directs >= 4) next = 1;
-        if (directs >= 8 && team >= 16) next = 2;
-        if (directs >= 12 && team >= 64) next = 3;
-        if (directs >= 16 && team >= 300) next = 4;
-        if (directs >= 16 && team >= 1_000) next = 5;
+        uint8 next = participants[account].id == 0 ? 0 : 1;
+        if (directs >= 4) next = 2;
+        if (directs >= 4 && qualifiedLevelTeamCount[account][2] >= 16) next = 3;
+        if (directs >= 4 && qualifiedLevelTeamCount[account][3] >= 64) next = 4;
+        if (directs >= 4 && qualifiedLevelTeamCount[account][4] >= 300) next = 5;
         uint8 previous = starRank[account];
         if (next <= previous) return;
         starRank[account] = next;
@@ -339,9 +368,9 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         if (sponsorWasActive) _credit(sponsor, directAmount, keccak256("DIRECT_INCOME"));
         else { autoUpgradeCredit[sponsor] += directAmount; workingReserve += directAmount; }
 
-        address upline = sponsor;
+        address upline = participants[sponsor].sponsor;
         uint256 allocated = directAmount;
-        for (uint8 level; level < MAX_UPLINE; ++level) {
+        for (uint8 level; level < MAX_WORKING_UPLINE; ++level) {
             uint256 amount = workingAllocation * _workingUplineBps(level) / BPS;
             allocated += amount;
             if (upline != address(0) && participants[upline].directCount >= 2) {
@@ -352,30 +381,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
             if (upline != address(0)) upline = participants[upline].sponsor;
         }
         workingReserve += workingAllocation - allocated;
-    }
-
-    function _allocateNonWorking(address account, address sponsor) private {
-        uint256 matrixAmount = nonWorkingAllocation * 8_000 / BPS;
-        uint256 u1Amount = nonWorkingAllocation * 1_000 / BPS;
-        uint256 upperAmount = nonWorkingAllocation * 1_000 / BPS;
-        address parent = matrixParent[account];
-        if (parent == address(0)) nonWorkingReserve += matrixAmount;
-        else _credit(parent, matrixAmount, keccak256("MATRIX_INCOME"));
-        _credit(sponsor, u1Amount, keccak256("NONWORKING_U1"));
-        nonWorkingReserve += _creditUpperUplines(participants[sponsor].sponsor, upperAmount, keccak256("NONWORKING_UPLINE"));
-        nonWorkingReserve += nonWorkingAllocation - matrixAmount - u1Amount - upperAmount;
-    }
-
-    function _creditUpperUplines(address account, uint256 amount, bytes32 reason) private returns (uint256) {
-        uint256 share = amount / 8;
-        uint256 allocated;
-        for (uint8 i; i < 8; ++i) {
-            if (account == address(0)) break;
-            _credit(account, share, reason);
-            allocated += share;
-            account = participants[account].sponsor;
-        }
-        return amount - allocated;
     }
 
     function _queueWorkingLevel(address account, uint8 level) private {
@@ -428,6 +433,19 @@ contract OpenProtocolParticipation is ReentrancyGuard {
                 && participants[account].directCount >= _singleLegDirects(level)
         ) {
             uint256 ownAmount = (_singleLegIncome(level) + _singleLegExtra(level)) * tokenUnit;
+            if (level == 2) {
+                uint256 redirect = 5 * tokenUnit;
+                ownAmount = 15 * tokenUnit;
+                pendingNonWorkingRedirect += redirect;
+                nonWorkingEntryCredit[account] += redirect;
+                emit NonWorkingEntryFunded(account, redirect);
+            } else if (level == 3) {
+                uint256 reentry = 9 * tokenUnit;
+                ownAmount = 26 * tokenUnit;
+                singleLegReentries[account]++;
+                singleLegEntries[account]++;
+                emit SingleLegReentered(account, singleLegEntries[account], reentry);
+            }
             pendingSingleLegIncome[account] += ownAmount;
             address u1 = participants[account].sponsor;
             address u2 = u1 == address(0) ? address(0) : participants[u1].sponsor;
@@ -435,9 +453,35 @@ contract OpenProtocolParticipation is ReentrancyGuard {
             if (_eligibleUpline(u1)) pendingSingleLegIncome[u1] += uplineAmount;
             if (_eligibleUpline(u2)) pendingSingleLegIncome[u2] += uplineAmount;
             singleLegLevel[account] = level;
+            if (level >= 2 && level <= 4) _recordQualifiedLevel(account, level);
             emit PoolIncomeQueued(account, 1, level, ownAmount + 2 * uplineAmount);
             unchecked { ++level; }
         }
+    }
+
+    function _recordQualifiedLevel(address account, uint8 level) private {
+        address upline = participants[account].sponsor;
+        for (uint8 depth; depth < MAX_UPLINE && upline != address(0); ++depth) {
+            qualifiedLevelTeamCount[upline][level]++;
+            _updateRank(upline);
+            upline = participants[upline].sponsor;
+        }
+    }
+
+    function _fundPendingNonWorkingRedirect() private {
+        uint256 amount = pendingNonWorkingRedirect;
+        if (amount > singleLegReserve) amount = singleLegReserve;
+        if (amount == 0) return;
+        pendingNonWorkingRedirect -= amount;
+        singleLegReserve -= amount;
+        nonWorkingReserve += amount;
+    }
+
+    function _settleSingleLegBacked(address account, uint256 capacity) private returns (uint256 amount) {
+        amount = pendingSingleLegIncome[account];
+        if (amount > singleLegReserve || amount > capacity) return 0;
+        pendingSingleLegIncome[account] -= amount;
+        singleLegReserve -= amount;
     }
 
     function _settleWorkingBacked(
@@ -511,7 +555,7 @@ contract OpenProtocolParticipation is ReentrancyGuard {
     function _singleLegIncome(uint8 level) private pure returns (uint256) {
         if (level == 1) return 10;
         if (level == 2) return 15;
-        if (level == 3) return 35;
+        if (level == 3) return 26;
         if (level == 4) return 50;
         if (level == 5) return 150;
         if (level == 6) return 500;
@@ -523,6 +567,7 @@ contract OpenProtocolParticipation is ReentrancyGuard {
 
     function _singleLegExtra(uint8 level) private pure returns (uint256) {
         if (level == 1) return 5;
+        if (level == 2) return 5;
         if (level == 3) return 9;
         return 0;
     }
@@ -540,15 +585,6 @@ contract OpenProtocolParticipation is ReentrancyGuard {
         return 2_500;
     }
 
-    function _allocateClub() private {
-        if (fiveStarCount == 0) clubReserve += clubAllocation;
-        else {
-            uint256 amount = clubAllocation + clubReserve;
-            clubReserve = 0;
-            fiveStarLiability += amount;
-            accFiveStarRewardPerMember += amount * ACC / totalFiveStarWeight;
-        }
-    }
     function _recordWeeklyDirect(address sponsor) private {
         uint256 week = currentWeek();
         uint64 count = ++weeklyDirects[week][sponsor];

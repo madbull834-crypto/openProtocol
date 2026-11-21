@@ -1,20 +1,33 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, upgrades } from "hardhat";
 
 describe("OpenProtocolParticipation", function () {
   async function fixture() {
     const [genesis, alice, bob, carol, dave, working, nonWorking, club, development] = await ethers.getSigners();
     const token = await ethers.deployContract("MockUSDT");
-    const protocol = await ethers.deployContract("OpenProtocolParticipation", [
-      await token.getAddress(), working.address, nonWorking.address, club.address,
-      development.address, genesis.address,
-    ]);
+    const factory = await ethers.getContractFactory("OpenProtocolParticipation");
+    const protocol = await upgrades.deployProxy(factory, [
+      await token.getAddress(), working.address, nonWorking.address, club.address, development.address, genesis.address,
+    ], { initializer: "initialize", kind: "uups" });
     const ticket = 25_000_000n;
     for (const member of [alice, bob, carol, dave]) {
       await token.mint(member.address, ticket);
       await token.connect(member).approve(await protocol.getAddress(), ticket);
     }
     return { genesis, alice, bob, carol, dave, working, nonWorking, club, development, token, protocol, ticket };
+  }
+
+  async function addMembers(protocol: any, token: any, sponsor: string, count: number) {
+    const members = [];
+    for (let i = 0; i < count; i++) {
+      const member = ethers.Wallet.createRandom().connect(ethers.provider);
+      await ethers.provider.send("hardhat_setBalance", [member.address, "0x56BC75E2D63100000"]);
+      await token.mint(member.address, 25_000_000n);
+      await token.connect(member).approve(await protocol.getAddress(), 25_000_000n);
+      await protocol.connect(member).register(sponsor);
+      members.push(member);
+    }
+    return members;
   }
 
   it("creates genesis and atomically records a 25 USDT registration", async function () {
@@ -46,22 +59,40 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.autoUpgradeCredit(genesis.address)).to.equal(24_000_000n);
     const before = await protocol.claimable(genesis.address);
     await protocol.connect(carol).register(genesis.address);
-    expect((await protocol.claimable(genesis.address)) - before).to.equal(14_400_000n);
+    expect((await protocol.claimable(genesis.address)) - before).to.equal(12_000_000n);
+    expect(await protocol.workingReserve()).to.equal(33_000_000n);
   });
 
-  it("tracks automatic levels and star rank", async function () {
+  it("pays 10% to the sponsor's first upline after the 80% direct share", async function () {
+    const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(genesis.address);
+    await protocol.connect(carol).register(alice.address);
+    await protocol.connect(dave).register(alice.address);
+    const genesisBefore = await protocol.claimable(genesis.address);
+    const [third] = await addMembers(protocol, token, alice.address, 1);
+    expect(third).to.not.equal(undefined);
+    expect(await protocol.claimable(alice.address)).to.equal(12_000_000n);
+    expect((await protocol.claimable(genesis.address)) - genesisBefore).to.equal(1_500_000n);
+  });
+
+  it("starts at one star and reaches two star with four directs", async function () {
     const { genesis, alice, bob, carol, dave, protocol } = await fixture();
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
     expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(2);
-    expect(await protocol.starRank(genesis.address)).to.equal(1);
+    expect(await protocol.starRank(genesis.address)).to.equal(2);
+    expect(await protocol.starRank(alice.address)).to.equal(1);
   });
 
   it("exposes the exact pool tables and original ten-level percentages", async function () {
     const { protocol } = await fixture();
+    expect(await protocol.singleLegQuote(2)).to.deep.equal([
+      15n, 1n, 15_000_000n, 5_000_000n, 2_000_000n, 2_000_000n,
+    ]);
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
-      30n, 2n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
+      30n, 2n, 26_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
     ]);
     expect(await protocol.workingLevelQuote(8)).to.deep.equal([
       16n, 960_000_000n, 15_360_000_000n, 0n, 15_360_000_000n,
@@ -73,8 +104,8 @@ describe("OpenProtocolParticipation", function () {
       3_700n, 4n, 15_000_000_000n, 0n, 2_500_000_000n, 2_500_000_000n,
     ]);
     const bps = [];
-    for (let level = 1; level <= 10; level++) bps.push(await protocol.tenLevelPercentageBps(level));
-    expect(bps).to.deep.equal([1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n, 50n]);
+    for (let level = 1; level <= 9; level++) bps.push(await protocol.tenLevelPercentageBps(level));
+    expect(bps).to.deep.equal([1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n]);
   });
 
   it("requires two directs and prior sequential completion for single-leg level three", async function () {
@@ -87,63 +118,55 @@ describe("OpenProtocolParticipation", function () {
     expect(quote3.directs).to.equal(2);
   });
 
-  it("queues level income after consuming the next auto-upgrade", async function () {
-    const { genesis, alice, bob, protocol } = await fixture();
-    await protocol.connect(alice).register(genesis.address);
-    await protocol.connect(bob).register(genesis.address);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n);
-    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_000_000n);
-    expect(await protocol.workingAutoUpgradeConsumed()).to.equal(15_000_000n);
-    expect(await protocol.nonWorkingAutoUpgradeConsumed()).to.equal(5_000_000n);
-    expect(await protocol.poolRewardCap(genesis.address)).to.equal(50_000_000n);
+  it("funds Single-Leg from 9 USDT and redirects 5 USDT at level two", async function () {
+    const { genesis, protocol, token } = await fixture();
+    await addMembers(protocol, token, genesis.address, 15);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(30_000_000n);
+    expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
+    expect(await protocol.singleLegReserve()).to.equal(130_000_000n);
+    expect(await protocol.poolRewardCap(genesis.address)).to.equal(125_000_000n);
     await protocol.connect(genesis).settlePoolRewards();
-    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(12_000_000n);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0);
-    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_000_000n);
+    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(30_000_000n);
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
   it("withdraws rewards using the 80/17/3 split", async function () {
-    const { genesis, alice, club, development, protocol, token } = await fixture();
+    const { genesis, alice, bob, carol, club, development, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(genesis.address);
+    await protocol.connect(carol).register(genesis.address);
     const gross = await protocol.claimable(genesis.address);
-    expect(gross).to.equal(8_100_000n);
+    expect(gross).to.equal(12_000_000n);
     await expect(protocol.connect(genesis).claim())
       .to.emit(protocol, "Claimed")
-      .withArgs(genesis.address, gross, 6_480_000n, 1_377_000n, 243_000n);
-    expect(await token.balanceOf(genesis.address)).to.equal(6_480_000n);
-    expect(await token.balanceOf(club.address)).to.equal(1_377_000n);
-    expect(await token.balanceOf(development.address)).to.equal(243_000n);
+      .withArgs(genesis.address, gross, 9_600_000n, 2_040_000n, 360_000n);
+    expect(await token.balanceOf(genesis.address)).to.equal(9_600_000n);
+    expect(await token.balanceOf(club.address)).to.equal(2_040_000n);
+    expect(await token.balanceOf(development.address)).to.equal(360_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("funds automatic working re-entry from available reserve", async function () {
-    const signers = await ethers.getSigners();
-    const genesis = signers[0];
-    const token = await ethers.deployContract("MockUSDT");
-    const protocol = await ethers.deployContract("OpenProtocolParticipation", [
-      await token.getAddress(), signers[17].address, signers[18].address,
-      signers[19].address, signers[19].address, genesis.address,
-    ]);
-    for (const member of signers.slice(1, 17)) {
-      await token.mint(member.address, 25_000_000n);
-      await token.connect(member).approve(await protocol.getAddress(), 25_000_000n);
-      await protocol.connect(member).register(genesis.address);
-    }
-    expect(await protocol.workingReentries(genesis.address)).to.equal(1);
-    expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
-    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(30_000_000n);
-    expect(await protocol.poolRewardCap(genesis.address)).to.equal(250_000_000n);
+  it("uses 9 USDT for a second Single-Leg entry at level three", async function () {
+    const { genesis, protocol, token } = await fixture();
+    await addMembers(protocol, token, genesis.address, 30);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(3);
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(56_000_000n);
+    expect(await protocol.singleLegEntries(genesis.address)).to.equal(2);
+    expect(await protocol.singleLegReentries(genesis.address)).to.equal(1);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("closes a completed week once", async function () {
-    const { genesis, alice, protocol } = await fixture();
+  it("pays the accumulated 1 USDT registrations to a weekly recruiter with five directs", async function () {
+    const { genesis, protocol, token } = await fixture();
     const week = await protocol.currentWeek();
-    await protocol.connect(alice).register(genesis.address);
+    await addMembers(protocol, token, genesis.address, 5);
+    expect(await protocol.superstarReserve()).to.equal(5_000_000n);
     await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);
     await ethers.provider.send("evm_mine", []);
-    await expect(protocol.closeWeek(week)).to.emit(protocol, "WeekClosed");
+    await expect(protocol.closeWeek(week)).to.emit(protocol, "WeekClosed").withArgs(week, genesis.address, 5_000_000n);
+    expect(await protocol.superstarReserve()).to.equal(0);
     await expect(protocol.closeWeek(week)).to.be.revertedWithCustomError(protocol, "WeekAlreadyClosed");
   });
 
@@ -162,14 +185,26 @@ describe("OpenProtocolParticipation", function () {
   it("rejects fee-on-transfer tokens without partial state", async function () {
     const [genesis, alice, working, nonWorking, club, development] = await ethers.getSigners();
     const token = await ethers.deployContract("MockFeeToken");
-    const protocol = await ethers.deployContract("OpenProtocolParticipation", [
-      await token.getAddress(), working.address, nonWorking.address, club.address,
-      development.address, genesis.address,
-    ]);
+    const factory = await ethers.getContractFactory("OpenProtocolParticipation");
+    const protocol = await upgrades.deployProxy(factory, [
+      await token.getAddress(), working.address, nonWorking.address, club.address, development.address, genesis.address,
+    ], { initializer: "initialize", kind: "uups" });
     await token.mint(alice.address, 25_000_000n);
     await token.connect(alice).approve(await protocol.getAddress(), 25_000_000n);
     await expect(protocol.connect(alice).register(genesis.address))
       .to.be.revertedWithCustomError(protocol, "IncorrectTokenReceipt");
     expect(await protocol.isRegistered(alice.address)).to.equal(false);
+  });
+
+  it("allows only the owner to upgrade while preserving proxy state", async function () {
+    const { genesis, alice, protocol } = await fixture();
+    const proxyAddress = await protocol.getAddress();
+    const v2 = await ethers.getContractFactory("OpenProtocolParticipationV2");
+    await expect(upgrades.upgradeProxy(proxyAddress, v2.connect(alice), { kind: "uups" })).to.be.reverted;
+    const upgraded = await upgrades.upgradeProxy(proxyAddress, v2.connect(genesis), { kind: "uups" });
+    expect(await upgraded.getAddress()).to.equal(proxyAddress);
+    expect(await upgraded.version()).to.equal(2);
+    expect(await upgraded.memberCount()).to.equal(1);
+    expect(await upgraded.owner()).to.equal(genesis.address);
   });
 });

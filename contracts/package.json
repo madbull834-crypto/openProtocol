@@ -7,7 +7,8 @@
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "deploy:mock-usdt:testnet": "hardhat run scripts/deploy-mock-usdt.ts --network bscTestnet",
-    "deploy:testnet": "hardhat run scripts/deploy.ts --network bscTestnet"
+    "deploy:testnet": "hardhat run scripts/deploy.ts --network bscTestnet",
+    "upgrade:testnet": "hardhat run scripts/upgrade.ts --network bscTestnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
@@ -18,5 +19,9 @@
     "solidity-coverage": "^0.8.16",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "@openzeppelin/hardhat-upgrades": "^3.9.1"
   }
 }

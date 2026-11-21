@@ -6,5 +6,6 @@ describe("income labels", () => {
     expect(incomeName("FIVE_STAR_ROYALTY")).toBe("Royalty Club income");
     expect(incomeStreams.find((stream) => stream.reason === "FIVE_STAR_ROYALTY")?.note)
       .toContain("17% withdrawal royalty");
+    expect(incomeName("SINGLE_LEG_INCOME")).toBe("Single-Leg income");
   });
 });

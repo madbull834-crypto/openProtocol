@@ -4,8 +4,8 @@ Testnet-validation implementation derived from the supplied 27-page Community Fu
 
 ## What is implemented
 
-- Immutable Solidity participation contract for BSC/BEP-20 USDT.
-- Exact $25 accounting: $15 working pool, $9 non-working pool, $1 five-star club.
+- UUPS-upgradeable Solidity participation contract for BSC/BEP-20 USDT, with owner-restricted implementation upgrades.
+- Exact $25 accounting: $15 Working Matrix, $9 Single-Leg reserve, $1 Weekly Superstar fund.
 - Sponsor graph, breadth-first binary matrix, direct/upline rewards, automatic levels and re-entry, ranks, weekly competition, and claims.
 - Withdrawal settlement at 80% user / 17% royalty / 3% development.
 - Premium React wallet UI with BSC validation, exact approval, registration, on-chain dashboard reads, referral links, and explorer receipts.
@@ -58,18 +58,20 @@ npm run deploy:mock-usdt:testnet -w contracts
 
 The command mints 1,000,000 test USDT to the deployer and prints the `USDT_ADDRESS` value for the protocol configuration. Its `mint` function is intentionally public and must never be used as a production token.
 
-1. Resolve the critical questions in `OPEN_QUESTIONS.md` and select independently reviewed immutable recipient vaults. The current testnet configuration may reuse the deployer for validation only; production should separate custody roles.
+1. Resolve the critical questions in `OPEN_QUESTIONS.md` and select independently reviewed recipient vaults and a multisig upgrade owner. The current testnet configuration may reuse the deployer for validation only; production should separate custody roles.
 2. Fund the deployer with BSC testnet BNB.
 3. Configure `.env`; never commit the key.
 4. Run `npm run deploy:testnet -w contracts`.
-5. Independently verify every constructor argument and then verify source on BscScan.
-6. Copy the deployment address into frontend and indexer environment variables, rebuild, and begin indexing from the deployment block.
+5. Independently verify the proxy, implementation, initializer arguments, and upgrade owner, then verify source on BscScan.
+6. Copy the proxy address into frontend and indexer environment variables, rebuild, and begin indexing from the deployment block.
+
+Future implementations are deployed with `PROTOCOL_PROXY_ADDRESS=<proxy> npm run upgrade:testnet -w contracts`. The command preserves the proxy address and state, validates storage compatibility, and requires the current proxy owner to sign the upgrade.
 
 The deployment script does not deploy placeholder pool vaults. Externally owned accounts should not be used as production pool destinations.
 
 ## Verification and security
 
-The contract has no owner/admin, proxy, mutable recipient, pause, rescue, or arbitrary-call capability. This minimizes privileged control but makes incorrect deployment arguments permanent. Tests are necessary, not sufficient: commission an independent smart-contract audit and obtain legal review before any mainnet or public financial launch.
+The contract uses an ERC-1967 UUPS proxy. Only the owner can authorize a compatible implementation upgrade; registration funds cannot be moved through an arbitrary admin call. Use a reviewed multisig and timelock as the production owner. Tests are necessary, not sufficient: commission an independent smart-contract and storage-layout audit and obtain legal review before any mainnet or public financial launch.
 
 ## Production operations
 
