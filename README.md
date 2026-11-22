@@ -7,7 +7,7 @@ Testnet-validation implementation derived from the supplied 27-page Community Fu
 - UUPS-upgradeable Solidity participation contract for BSC/BEP-20 USDT, with owner-restricted implementation upgrades.
 - Exact $25 accounting: $15 Working Matrix, $9 Single-Leg reserve, $1 Weekly Superstar fund.
 - Sponsor graph, breadth-first binary matrix, direct/upline rewards, automatic levels and re-entry, ranks, weekly competition, and claims.
-- Withdrawal settlement at 80% user / 17% royalty / 3% development.
+- Withdrawal settlement at 80% user / 15% star-club royalty (3% to each of the 1–5 Star clubs) / 5% development.
 - Premium React wallet UI with BSC validation, exact approval, registration, on-chain dashboard reads, referral links, and explorer receipts.
 - Read-only Fastify/Prisma event indexer with finality lag, idempotent logs, checkpoints, replay, and reorg rewind.
 - Contract, frontend utility, and indexer-boundary tests.

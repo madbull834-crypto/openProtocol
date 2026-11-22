@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { ArrowRight, ArrowUpRight, Award, Calendar, Check, ChevronRight, Clock, Coins, Copy, Crown, ExternalLink, Eye, Fuel, Layers, LayoutGrid, Lock, MessageCircle, Network, Send, Share2, ShieldCheck, TrendingUp, UserRoundCheck, Users, Wallet, WalletCards, Zap } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Award, Calendar, Check, ChevronRight, Clock, Coins, Copy, Crown, ExternalLink, Eye, Fuel, Layers, LayoutGrid, Lock, MessageCircle, Network, Send, Share2, ShieldCheck, TrendingUp, Trophy, UserRoundCheck, Users, Wallet, WalletCards, Zap } from "lucide-react";
 import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress, type Address } from "viem";
 import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
@@ -9,7 +9,7 @@ import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
 import { useMatrixTree, type MatrixNode } from "./matrix";
-import { incomeName, incomeStreams, useDirectReferrals, useIncomeHistory } from "./income";
+import { incomeName, incomeStreams, useDirectReferrals, useIncomeHistory, useSingleLegTeam } from "./income";
 import { Landing } from "./Landing";
 import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
 
@@ -458,13 +458,21 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
 }
 
 const rankNames = ["Member", "1 Star", "2 Star", "3 Star", "4 Star", "5 Star"];
+const royaltyClubs = [
+  { rank: 1, name: rankNames[1], requirement: "Registered member", cap: "2× ticket", reward: "3% royalty" },
+  { rank: 2, name: rankNames[2], requirement: "4 direct referrals", cap: "5× ticket", reward: "3% royalty" },
+  { rank: 3, name: rankNames[3], requirement: "16 members at Level 2", cap: "10× ticket", reward: "3% royalty" },
+  { rank: 4, name: rankNames[4], requirement: "64 members at Level 3", cap: "50× ticket", reward: "3% royalty" },
+  { rank: 5, name: rankNames[5], requirement: "300 members at Level 4", cap: "Unlimited", reward: "3% royalty" },
+  { rank: null, name: "Superstar", requirement: "Week's top recruiter with 5+ directs", cap: "Weekly", reward: "Superstar fund" },
+];
 
 const isMember = (participant?: { id: bigint }) => Boolean(participant?.id);
 
-/** Mirrors `claim()`: 17% to the Royalty Club and 3% to development are taken from the gross amount. */
+/** Mirrors `claim()`: 15% to the star clubs (3% each for 1–5 Star) and 5% to development are taken from the gross amount. */
 function claimFees(gross?: bigint) {
   const value = gross ?? 0n;
-  const royalty = value * 1_700n / 10_000n;
+  const royalty = value * 1_500n / 10_000n;
   const development = value * 300n / 10_000n;
   return { royalty, development, net: value - royalty - development };
 }
@@ -472,7 +480,7 @@ function claimFees(gross?: bigint) {
 const streamIcons: Record<string, typeof Users> = {
   DIRECT_INCOME: Users, TEN_LEVEL_UPLINE: Layers, MATRIX_INCOME: LayoutGrid, NONWORKING_U1: UserRoundCheck, NONWORKING_UPLINE: Network,
   REENTRY: Zap, WEEKLY_SUPERSTAR: Award, SINGLE_LEG_INCOME: TrendingUp, WORKING_LEVEL_INCOME: Layers,
-  NON_WORKING_MATRIX_INCOME: Network, FIVE_STAR_ROYALTY: ShieldCheck,
+  NON_WORKING_MATRIX_INCOME: Network, FIVE_STAR_ROYALTY: ShieldCheck, STAR_CLUB_ROYALTY: Crown,
 };
 const streamIcon = (reason: string) => streamIcons[reason] ?? Coins;
 
@@ -549,6 +557,12 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "qualifiedLevelTeamCount", args: [account, 3] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "qualifiedLevelTeamCount", args: [account, 4] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "superstarReserve" },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "pendingClubReward", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "clubMemberCount", args: [1] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "clubMemberCount", args: [2] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "clubMemberCount", args: [3] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "clubMemberCount", args: [4] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "fiveStarCount" },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -584,6 +598,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const fiveStarWeight = rewards.data?.[19]?.result as bigint | undefined;
   const weeklyDirects = rewards.data?.[20]?.result as bigint | undefined;
   const weeklyCompetition = rewards.data?.[21]?.result as readonly [Address, bigint, boolean] | undefined;
+  const isWeeklyLeader = Boolean(weeklyCompetition && weeklyCompetition[0] !== zeroAddress && weeklyCompetition[0].toLowerCase() === address.toLowerCase() && weeklyCompetition[1] >= 5n);
   const singleLegEntries = rewards.data?.[22]?.result as bigint | undefined;
   const singleLegReentries = rewards.data?.[23]?.result as bigint | undefined;
   const nonWorkingEntryCredit = rewards.data?.[24]?.result as bigint | undefined;
@@ -591,6 +606,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const qualifiedLevel3 = rewards.data?.[26]?.result as bigint | undefined;
   const qualifiedLevel4 = rewards.data?.[27]?.result as bigint | undefined;
   const superstarReserve = rewards.data?.[28]?.result as bigint | undefined;
+  const pendingClub = rewards.data?.[29]?.result as bigint | undefined;
+  const clubMembers = [30, 31, 32, 33, 34].map(i => rewards.data?.[i]?.result as bigint | undefined);
+  const pendingRoyalty = pendingFiveStar === undefined && pendingClub === undefined ? undefined : (pendingFiveStar ?? 0n) + (pendingClub ?? 0n);
   useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) void history.refetch(); }, [claimReceipt.isSuccess, settleReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
   // claimable = everything credited − everything withdrawn, so a shortfall means the indexer started late or is behind.
   const historyIncomplete = Boolean(history.data && creditedIncome !== undefined && BigInt(history.data.lifetimeCredited) - BigInt(history.data.claims.gross) < creditedIncome);
@@ -672,9 +690,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const earnedStreams = streamRows.filter(row => row.amount > 0n).sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0));
   const idleStreams = streamRows.filter(row => row.amount === 0n);
   const sourceTotal = earnedStreams.reduce((sum, row) => sum + row.amount, 0n);
-  const royaltyLifetime = historyAmount("FIVE_STAR_ROYALTY") ?? 0n;
-  const royaltyPayments = history.data?.totals.FIVE_STAR_ROYALTY?.count ?? 0;
-  const royaltyActivity = history.data?.recent.filter(item => item.reason === "FIVE_STAR_ROYALTY") ?? [];
+  const royaltyLifetime = (historyAmount("FIVE_STAR_ROYALTY") ?? 0n) + (historyAmount("STAR_CLUB_ROYALTY") ?? 0n);
+  const royaltyPayments = (history.data?.totals.FIVE_STAR_ROYALTY?.count ?? 0) + (history.data?.totals.STAR_CLUB_ROYALTY?.count ?? 0);
+  const royaltyActivity = history.data?.recent.filter(item => item.reason === "FIVE_STAR_ROYALTY" || item.reason === "STAR_CLUB_ROYALTY") ?? [];
   const teamIncomeCard = <section className="ti">
     <div className="ti-hero">
       <div className="ti-headline">
@@ -784,7 +802,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <ul className="db-rows db-snap">
               <li><span><em className="snap-icon green"><Wallet size={14}/></em>Available to withdraw</span><b>{formatToken(withdrawable)} <small>USDT</small></b></li>
               <li><span><em className="snap-icon blue"><Layers size={14}/></em>Team income in pools</span><b>{formatToken(queued)} <small>USDT</small></b></li>
-              <li><span><em className="snap-icon purple"><Award size={14}/></em>Royalty Club income</span><b>{formatToken(pendingFiveStar)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon purple"><Award size={14}/></em>Royalty Club income</span><b>{formatToken(pendingRoyalty)} <small>USDT</small></b></li>
             </ul>
             <div className="db-placement"><span>Matrix parent</span><b className="mono">{placement === undefined ? "—" : placement === zeroAddress ? "Genesis" : shortAddress(placement)}</b><button className="db-text-btn" onClick={() => setTab("network")}>View network <ChevronRight size={14}/></button></div>
           </div>
@@ -856,18 +874,18 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-two">
           <div className="db-card db-fee">
             <div className="db-section-head"><div><small>WITHDRAWALS</small><h3>Where each withdrawal goes</h3></div></div>
-            <div className="fee-split"><i className="you" style={{ width: "80%" }}><span>80%</span></i><i className="club" style={{ width: "17%" }}><span>17%</span></i><i className="dev" style={{ width: "3%" }}/></div>
+            <div className="fee-split"><i className="you" style={{ width: "80%" }}><span>80%</span></i><i className="club" style={{ width: "15%" }}><span>15%</span></i><i className="dev" style={{ width: "5%" }}/></div>
             <ul className="fee-rows">
               <li><span><i className="you"/>You receive</span><b>{formatToken(fees.net)} USDT</b></li>
-              <li><span><i className="club"/>Royalty Club · 17%</span><b>{formatToken(fees.royalty)} USDT</b></li>
-              <li><span><i className="dev"/>Development fund · 3%</span><b>{formatToken(fees.development)} USDT</b></li>
+              <li><span><i className="club"/>Star clubs · 15%</span><b>{formatToken(fees.royalty)} USDT</b></li>
+              <li><span><i className="dev"/>Development fund · 5%</span><b>{formatToken(fees.development)} USDT</b></li>
             </ul>
             <div className="fee-total"><span>Next withdrawal</span><b>{formatToken(withdrawable)} <em>USDT</em></b></div>
             {history.data && history.data.claims.count > 0 && <p className="db-foot-note">So far you've withdrawn {formatToken(BigInt(history.data.claims.gross))} USDT and received {formatToken(BigInt(history.data.claims.net))} USDT.</p>}
           </div>
           <div className="db-card db-club">
-            <div className="db-section-head"><div><small>ROYALTY CLUB INCOME</small><h3>{currentRank >= 5 ? "You're earning club income" : "Unlock your club share"}</h3></div><span className="club-badge"><Award size={14}/> 5 Star</span></div>
-            <div className="club-amount"><small>Club income waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>Your weighted share is added to your balance automatically when you withdraw</span></div>
+            <div className="db-section-head"><div><small>ROYALTY CLUB INCOME</small><h3>{currentRank >= 1 ? "You're earning club income" : "Join to earn club income"}</h3></div><span className="club-badge"><Award size={14}/> {rankNames[currentRank]} club</span></div>
+            <div className="club-amount"><small>Club income waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b><span>Your club share is added to your balance automatically when you withdraw</span></div>
             {currentRank < 5 ? <div className="club-reqs">
               <div><div><span>Direct referrals</span><b>{Math.min(directCount, 4)} / 4</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directCount / 4 * 100)}%` }}/></div></div>
               <div><div><span>Level 4 members</span><b>{Math.min(Number(qualifiedLevel4 ?? 0n), 300).toLocaleString()} / 300</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, Number(qualifiedLevel4 ?? 0n) / 3)}%` }}/></div></div>
@@ -897,16 +915,50 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "royalty" && <div className="db-stack">
         <div className="db-summary">
-          <div className="primary"><span className="db-sum-icon"><Crown size={16}/></span><small>Royalty income waiting</small><b>{formatToken(pendingFiveStar)} <em>USDT</em></b><span>{currentRank >= 5 ? "Your live, unsettled Royalty Club share" : "Unlocks when you reach the Five-Star rank"}</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
+          <div className="primary"><span className="db-sum-icon"><Crown size={16}/></span><small>Royalty income waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b><span>Your live, unsettled share of the {rankNames[currentRank]} club</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
           <div><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime royalty income</small><b>{history.data ? formatToken(royaltyLifetime) : "—"} <em>USDT</em></b><span>{history.data ? `${royaltyPayments} credited ${royaltyPayments === 1 ? "payment" : "payments"}` : "History service unavailable"}</span></div>
-          <div><span className="db-sum-icon"><Award size={16}/></span><small>Your royalty weight</small><b>{fiveStarWeight?.toString() ?? "—"}</b><span>One weight at Five-Star, then one more per additional 1,000 team members</span></div>
+          <div><span className="db-sum-icon"><Award size={16}/></span><small>Members sharing your club</small><b>{currentRank >= 1 ? clubMembers[currentRank - 1]?.toLocaleString() ?? "—" : "—"}</b><span>{currentRank >= 5 ? `Your weight: ${fiveStarWeight?.toString() ?? "—"} · +1 per extra 1,000 team members` : "Your club's 3% is split equally among these members"}</span></div>
         </div>
         {actionError && <p className="db-error">{actionError}</p>}
 
+        <div className="db-card">
+          <div className="db-section-head"><div><small>ROYALTY CLUBS</small><h3>All six clubs</h3></div><span className="db-tag">You: {rankNames[currentRank]}{isWeeklyLeader ? " · Superstar" : ""}</span></div>
+          <div className="club-grid">{royaltyClubs.filter(club => club.rank !== null).map(club => {
+            const rank = club.rank as number;
+            const state = rank === currentRank ? "current" : rank < currentRank ? "reached" : "locked";
+            return <div key={club.name} className={`club-tier ${state}`}>
+              <div className="club-tier-head"><span className="club-tier-icon">{rank === 5 ? <Crown size={15}/> : <Award size={15}/>}</span>{state === "current" ? <em>Your club</em> : state === "reached" ? <Check size={14}/> : null}</div>
+              <b>{club.name}</b>
+              <small>{club.requirement}</small>
+              <ul><li><span>Income cap</span><strong>{club.cap}</strong></li><li><span>Royalty pool</span><strong>{club.reward}</strong></li><li><span>Members</span><strong>{clubMembers[rank - 1]?.toLocaleString() ?? "—"}</strong></li></ul>
+            </div>;
+          })}</div>
+          <div className={`superstar-club${isWeeklyLeader ? " leading" : ""}`}>
+            <div className="ss-glow"/>
+            <div className="ss-sparkles"><i/><i/><i/><i/><i/><i/></div>
+            <div className="ss-main">
+              <span className="ss-trophy"><Trophy size={30}/></span>
+              <div>
+                <small>✦ THE 6TH CLUB · WEEKLY</small>
+                <h4>Superstar Club</h4>
+                <p>Be the week's top recruiter with 5+ direct referrals and take the entire Superstar prize pool.</p>
+              </div>
+              {isWeeklyLeader && <em className="ss-badge"><Crown size={12}/> You're leading</em>}
+            </div>
+            <div className="ss-stats">
+              <div className="ss-prize"><small>Prize pool</small><b>{formatToken(superstarReserve)} <em>USDT</em></b></div>
+              <div><small>Your directs this week</small><b>{weeklyDirects?.toString() ?? "—"}</b></div>
+              <div><small>Leading score</small><b>{weeklyCompetition?.[1]?.toString() ?? "—"}</b></div>
+              <div><small>Week closes</small><b className="ss-small">{weekEnds}</b></div>
+            </div>
+            <div className="ss-progress"><div><span>{Number(weeklyDirects ?? 0n) >= 5 ? "Qualified — keep recruiting to stay on top" : `${5 - Number(weeklyDirects ?? 0n)} more directs this week to qualify`}</span><b>{Math.min(Number(weeklyDirects ?? 0n), 5)} / 5</b></div><div className="ss-bar"><i style={{ width: `${Math.min(100, Number(weeklyDirects ?? 0n) / 5 * 100)}%` }}/></div></div>
+          </div>
+        </div>
+
         <div className="db-two">
           <div className="db-card db-club">
-            <div className="db-section-head"><div><small>ROYALTY CLUB STATUS</small><h3>{currentRank >= 5 ? "Your club income is active" : "Qualify for Royalty Income"}</h3></div><span className="club-badge"><Crown size={14}/> 5 Star</span></div>
-            <div className="club-amount"><small>Current rank</small><b>{rankNames[currentRank]}</b><span>Royalty Club income is distributed by achievement weight among eligible Five-Star members.</span></div>
+            <div className="db-section-head"><div><small>ROYALTY CLUB STATUS</small><h3>{currentRank >= 1 ? "Your club income is active" : "Join to earn club income"}</h3></div><span className="club-badge"><Crown size={14}/> {rankNames[currentRank]} club</span></div>
+            <div className="club-amount"><small>Current rank</small><b>{rankNames[currentRank]}</b><span>Every 1–5 Star club gets 3% of all withdrawals, shared among that club's members. Rank up to move into a higher club.</span></div>
             {currentRank < 5 ? <div className="club-reqs">
               <div><div><span>Direct referrals</span><b>{Math.min(directCount, 4)} / 4</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directCount / 4 * 100)}%` }}/></div></div>
               <div><div><span>Level 4 members</span><b>{Math.min(Number(qualifiedLevel4 ?? 0n), 300).toLocaleString()} / 300</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, Number(qualifiedLevel4 ?? 0n) / 3)}%` }}/></div></div>
@@ -916,12 +968,12 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           <div className="db-card db-fee">
             <div className="db-section-head"><div><small>HOW IT IS FUNDED</small><h3>Withdrawal-funded royalty</h3></div></div>
             <ul className="fee-rows">
-              <li><span><i className="club"/>Every reward withdrawal</span><b>17%</b></li>
-              <li><span><i className="you"/>Eligibility</span><b>Five-Star rank</b></li>
-              <li><span><i className="dev"/>Distribution</span><b>By club weight</b></li>
+              <li><span><i className="club"/>Every reward withdrawal</span><b>15%</b></li>
+              <li><span><i className="you"/>Each club (1–5 Star)</span><b>3%</b></li>
+              <li><span><i className="dev"/>Distribution</span><b>Equal within club</b></li>
             </ul>
             <div className="fee-total"><span>Claim behavior</span><b>Automatic</b></div>
-            <p className="db-foot-note">Your pending club share is settled into your claimable balance when you withdraw. The same 80% user, 17% club and 3% development split then applies.</p>
+            <p className="db-foot-note">Your pending club share is settled into your claimable balance when you withdraw. The same 80% user, 15% clubs and 5% development split then applies.</p>
           </div>
         </div>
 
@@ -1054,6 +1106,7 @@ const SINGLE_LEG_TABLE = [
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 function SingleLegTree({ address, team, directs, currentLevel }: { address?: Address; team?: bigint; directs?: bigint; currentLevel?: number }) {
+  const indexedTeam = useSingleLegTeam(address);
   const quotes = useReadContracts({
     allowFailure: true,
     contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
@@ -1103,8 +1156,26 @@ function SingleLegTree({ address, team, directs, currentLevel }: { address?: Add
 
     <div className="sl-summary">
       <div><small>LEVELS DONE</small><b>{done} / 10</b></div>
+      <div><small>YOUR SINGLE-LEG TEAM</small><b>{teamValue.toLocaleString()} <em>members</em></b></div>
       <div><small>UNLOCKED SO FAR</small><b>{usdt(earned)} <em>USDT</em></b></div>
       <div><small>STILL AVAILABLE</small><b>{usdt(remaining)} <em>USDT</em></b></div>
+    </div>
+
+    <div className="sl-team">
+      <div className="sl-team-head">
+        <div><small>YOUR 10-LEVEL DOWNLINE</small><h4>Single-Leg team members</h4></div>
+        <span>{indexedTeam.data?.length ?? 0} indexed / {teamValue.toLocaleString()} on-chain</span>
+      </div>
+      {indexedTeam.isLoading && <p className="db-foot-note">Loading your indexed Single-Leg team…</p>}
+      {indexedTeam.isError && <p className="db-warn">The team history service is unavailable. Your on-chain team count is still {teamValue.toLocaleString()}.</p>}
+      {indexedTeam.data?.length === 0 && <p className="db-empty-note">No Single-Leg team members yet. Direct and indirect members will appear here after their registrations are indexed.</p>}
+      {indexedTeam.data && indexedTeam.data.length > 0 && <ul className="sl-team-list">{indexedTeam.data.slice(0, 50).map(member => <li key={member.address}>
+        <span className="sl-team-depth">L{member.depth}</span>
+        <span><b>Member #{member.memberId}</b><small>{member.depth === 1 ? "Direct referral" : `Indirect · sponsor ${shortAddress(member.sponsor)}`}</small></span>
+        <a className="mono" href={`${explorerUrl}/address/${member.address}`} target="_blank" rel="noreferrer">{shortAddress(member.address)} <ExternalLink size={11}/></a>
+      </li>)}</ul>}
+      {indexedTeam.data && indexedTeam.data.length > 50 && <p className="db-foot-note">Showing the first 50 of {indexedTeam.data.length.toLocaleString()} indexed team members.</p>}
+      {indexedTeam.data && indexedTeam.data.length < teamValue && <p className="db-foot-note">The indexer is catching up. The contract's {teamValue.toLocaleString()}-member total remains authoritative.</p>}
     </div>
 
     <div className="sl-table" role="table" aria-label="Single-Leg levels">

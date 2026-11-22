@@ -25,6 +25,39 @@ app.get<{ Params: { address: string } }>("/api/participants/:address/referrals",
   return referrals.map((item) => ({ ...item, memberId: item.memberId.toString(), blockNumber: item.blockNumber.toString() }));
 });
 
+type TeamRow = {
+  address: string;
+  sponsor: string;
+  memberId: bigint;
+  directCount: number;
+  joinedAt: Date;
+  blockNumber: bigint;
+  depth: number;
+};
+
+app.get<{ Params: { address: string } }>("/api/participants/:address/team", async (request, reply) => {
+  const address = request.params.address.toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address)) return reply.code(400).send({ error: "Invalid address" });
+  const team = await prisma.$queryRaw<TeamRow[]>(Prisma.sql`
+    WITH RECURSIVE team AS (
+      SELECT p.address, p.sponsor, p."memberId", p."directCount", p."joinedAt", p."blockNumber", 1 AS depth
+      FROM "Participant" p
+      WHERE p.sponsor = ${address}
+      UNION ALL
+      SELECT p.address, p.sponsor, p."memberId", p."directCount", p."joinedAt", p."blockNumber", team.depth + 1
+      FROM "Participant" p
+      INNER JOIN team ON p.sponsor = team.address
+      WHERE team.depth < 10
+    )
+    SELECT * FROM team ORDER BY depth ASC, "memberId" ASC
+  `);
+  return team.map((member) => ({
+    ...member,
+    memberId: member.memberId.toString(),
+    blockNumber: member.blockNumber.toString(),
+  }));
+});
+
 app.get<{ Params: { address: string } }>("/api/participants/:address/income", async (request, reply) => {
   const address = request.params.address.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(address)) return reply.code(400).send({ error: "Invalid address" });

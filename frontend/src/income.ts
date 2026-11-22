@@ -17,6 +17,11 @@ export type DirectReferral = {
   joinedAt: string;
 };
 
+export type SingleLegTeamMember = DirectReferral & {
+  sponsor: Address;
+  depth: number;
+};
+
 /** Labels for every reason code the contract passes to `_credit`. */
 export const incomeStreams = [
   { reason: "DIRECT_INCOME", name: "Working Matrix direct", note: "12 USDT from each direct referral after your first two" },
@@ -27,8 +32,13 @@ export const incomeStreams = [
   { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "The accumulated $1 registration fund for the weekly winner" },
   {
     reason: "FIVE_STAR_ROYALTY",
-    name: "Royalty Club income",
-    note: "Five-Star members' weighted share of the 17% withdrawal royalty",
+    name: "5 Star Club royalty",
+    note: "5 Star members' weighted share of their club's 3% of every withdrawal",
+  },
+  {
+    reason: "STAR_CLUB_ROYALTY",
+    name: "Star Club royalty",
+    note: "Your equal share of your 1–4 Star club's 3% of every withdrawal",
   },
 ] as const;
 
@@ -62,6 +72,21 @@ export function useDirectReferrals(address?: Address) {
       const response = await fetch(`${apiBaseUrl}/api/participants/${address}/referrals`);
       if (!response.ok) throw new Error(`Referral service returned ${response.status}`);
       return await response.json() as DirectReferral[];
+    },
+  });
+}
+
+/** Complete sponsor downline, limited to the same ten levels counted by the contract. */
+export function useSingleLegTeam(address?: Address) {
+  return useQuery({
+    queryKey: ["single-leg-team", address?.toLowerCase()],
+    enabled: Boolean(address),
+    refetchInterval: 30_000,
+    retry: 1,
+    queryFn: async (): Promise<SingleLegTeamMember[]> => {
+      const response = await fetch(`${apiBaseUrl}/api/participants/${address}/team`);
+      if (!response.ok) throw new Error(`Team service returned ${response.status}`);
+      return await response.json() as SingleLegTeamMember[];
     },
   });
 }

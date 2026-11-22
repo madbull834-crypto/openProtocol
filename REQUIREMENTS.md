@@ -18,8 +18,8 @@ Source: *Community Funding Protocol*, 27 pages, supplied 2026-11-11. Page refere
 | Participation | Single-Leg reserve | $9 USDT | confirmed business rule |
 | Participation | Weekly Superstar fund | $1 USDT | confirmed business rule |
 | Withdrawal | User wallet | 80% | pp. 18, 26 |
-| Withdrawal | Royalty/club fund | 17% | pp. 18, 26 |
-| Withdrawal | Development and maintenance | 3% | pp. 18, 26 |
+| Withdrawal | Royalty/club fund (3% each to 1–5 Star) | 15% | client change, 2026-11-22 (PDF: 17%) |
+| Withdrawal | Development and maintenance | 5% | client change, 2026-11-22 (PDF: 3%) |
 
 The participation split reconciles to $25. The withdrawal split reconciles to 100%.
 
@@ -39,9 +39,9 @@ The implementation now includes deterministic rules where the source PDF is inco
 - Exact pool entitlements remain queued until the matching reserve and rank cap can cover the queued amount. Queued entitlements are not included in contract liabilities before settlement.
 - Non-working re-entry occurs every 30 team members, funded only when the Non-Working reserve is sufficient.
 - Every registered member starts at One Star. Two Star requires four directs; Three Star requires 16 team members at Single-Leg Level 2; Four Star requires 64 at Level 3; Five Star requires 300 at Level 4. Caps are respectively 2×, 5×, 10×, 50× and unlimited.
-- Five-Star members receive one royalty weight on qualification and another weight for every additional 1,000-member achievement. The 17% withdrawal royalty uses a weighted accumulator.
+- The 15% withdrawal royalty is split equally, 3% to each of the 1, 2, 3, 4 and 5 Star clubs. In the 1–4 Star clubs every member has an equal share. In the 5 Star club, members receive one royalty weight on qualification and another for every additional 1,000-member achievement. A member belongs only to the club of their current rank, and any club with no members forwards its 3% to the club vault. Members registered before this upgrade are enrolled with the permissionless `syncClubMembers` call.
 - Each registration adds 1 USDT to the Weekly Superstar reserve. The earliest highest recruiter with at least five directs wins the accumulated fund when the completed Unix/UTC week is closed; otherwise it rolls forward.
-- Claims pay 80% to the user, 17% to five-star royalty or the club vault, and 3% to the immutable development address.
+- Claims pay 80% to the user, 15% to the 1–5 Star club royalty (or the club vault), and 5% to the development address.
 - Credits are backed by USDT held by the contract; rewards are never minted.
 - Deployment uses an ERC-1967 UUPS proxy. Initialization is one-time, direct implementation initialization is disabled, upgrades require the proxy owner, and future implementations must preserve the validated storage layout.
 

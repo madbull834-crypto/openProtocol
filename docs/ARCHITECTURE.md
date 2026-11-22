@@ -7,8 +7,8 @@ Wallet (BSC) ── approve/register ──> OpenProtocolParticipation
                                       └──  1 USDT → five-star accumulator
                                              │
 Participant ── claim ────────────────────────┼── 80% → participant
-                                             ├── 17% → five-star/vault
-                                             └──  3% → development fund
+                                             ├── 15% → star clubs, 3% each for 1–5 Star (empty club → vault)
+                                             └──  5% → development fund
                                                 │
 Contract events ── read-only indexer ──> PostgreSQL ──> analytics API ──> Web app
 ```

@@ -132,20 +132,70 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("withdraws rewards using the 80/17/3 split", async function () {
+  it("withdraws rewards using the 80/15/5 split", async function () {
     const { genesis, alice, bob, carol, club, development, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
     await protocol.connect(bob).register(genesis.address);
     await protocol.connect(carol).register(genesis.address);
     const gross = await protocol.claimable(genesis.address);
     expect(gross).to.equal(12_000_000n);
+    // 15% royalty = 1.8 USDT, 3% (0.36) per club. Only the 1 Star club has members;
+    // the four empty clubs forward 1.44 USDT to the vault.
     await expect(protocol.connect(genesis).claim())
       .to.emit(protocol, "Claimed")
-      .withArgs(genesis.address, gross, 9_600_000n, 2_040_000n, 360_000n);
+      .withArgs(genesis.address, gross, 9_600_000n, 1_800_000n, 600_000n);
     expect(await token.balanceOf(genesis.address)).to.equal(9_600_000n);
-    expect(await token.balanceOf(club.address)).to.equal(2_040_000n);
-    expect(await token.balanceOf(development.address)).to.equal(360_000n);
+    expect(await token.balanceOf(club.address)).to.equal(1_440_000n);
+    expect(await token.balanceOf(development.address)).to.equal(600_000n);
+    expect(await protocol.clubLiability()).to.equal(360_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("shares each club's 3% equally among the members of that club", async function () {
+    const { genesis, alice, bob, carol, dave, protocol } = await fixture();
+    for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
+    // genesis has four directs -> 2 Star; alice, bob, carol, dave -> 1 Star.
+    expect(await protocol.starRank(genesis.address)).to.equal(2);
+    expect(await protocol.clubRank(genesis.address)).to.equal(2);
+    expect(await protocol.clubMemberCount(1)).to.equal(4);
+    expect(await protocol.clubMemberCount(2)).to.equal(1);
+
+    const gross = await protocol.claimable(genesis.address); // 24 USDT from directs 3 and 4
+    await protocol.connect(genesis).claim();
+    const clubShare = gross * 300n / 10_000n;
+    expect(await protocol.pendingClubReward(alice.address)).to.equal(clubShare / 4n);
+    expect(await protocol.pendingClubReward(genesis.address)).to.equal(clubShare);
+    expect(await protocol.withdrawable(alice.address)).to.equal(clubShare / 4n);
+
+    await expect(protocol.connect(alice).claim())
+      .to.emit(protocol, "RewardCredited")
+      .withArgs(alice.address, clubShare / 4n, ethers.keccak256(ethers.toUtf8Bytes("STAR_CLUB_ROYALTY")));
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("settles club royalty and moves the member when their rank rises", async function () {
+    const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(genesis.address);
+    await protocol.connect(carol).register(genesis.address);
+    await protocol.connect(genesis).claim(); // 0.36 USDT shared by the 4 one-star members
+    const earned = await protocol.pendingClubReward(genesis.address);
+    expect(earned).to.equal(90_000n);
+    await protocol.connect(dave).register(genesis.address); // fourth direct -> 2 Star
+    expect(await protocol.clubRank(genesis.address)).to.equal(2);
+    expect(await protocol.clubMemberCount(1)).to.equal(4); // alice, bob, carol, dave
+    expect(await protocol.pendingClubReward(genesis.address)).to.equal(0n);
+    expect(await protocol.claimable(genesis.address)).to.equal(12_000_000n + earned);
+    expect(await token.balanceOf(await protocol.getAddress())).to.be.greaterThan(0n);
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("lets anyone enrol existing members into their clubs after an upgrade", async function () {
+    const { genesis, alice, protocol } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.syncClubMembers(1, 100); // idempotent: already enrolled members are unchanged
+    expect(await protocol.clubMemberCount(1)).to.equal(2);
+    expect(await protocol.clubRank(alice.address)).to.equal(1);
   });
 
   it("uses 9 USDT for a second Single-Leg entry at level three", async function () {

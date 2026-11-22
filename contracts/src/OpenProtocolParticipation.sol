@@ -17,6 +17,13 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 private constant WEEK = 7 days;
     uint8 private constant MAX_UPLINE = 10;
     uint8 private constant MAX_WORKING_UPLINE = 9;
+    /// @notice Share of every withdrawal that funds the 1–5 Star royalty clubs.
+    uint256 public constant ROYALTY_BPS = 1_500;
+    /// @notice Share of every withdrawal sent to the development fund.
+    uint256 public constant DEVELOPMENT_BPS = 500;
+    /// @notice Each of the five star clubs receives an equal 3% of every withdrawal.
+    uint256 public constant CLUB_SHARE_BPS = 300;
+    uint8 private constant STAR_CLUBS = 5;
 
     struct Participant { uint64 id; uint64 directCount; address sponsor; uint64 joinedAt; }
     struct WeeklyCompetition { address leader; uint64 winningDirects; bool closed; }
@@ -90,9 +97,20 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     mapping(uint256 => mapping(address => uint64)) public weeklyDirects;
     mapping(uint256 => WeeklyCompetition) public weeklyCompetition;
 
+    // ---- Appended in the star-club royalty upgrade (uses 5 gap slots). ----
+    /// @notice Royalty per 1–4 Star club member, scaled by 1e24. The 5 Star club keeps its weighted accumulator.
+    mapping(uint8 => uint256) public accClubRewardPerMember;
+    /// @notice Members currently enrolled in each 1–4 Star club.
+    mapping(uint8 => uint64) public clubMemberCount;
+    /// @notice The 1–4 Star club an account is enrolled in; 0 when not enrolled (unregistered, unsynced, or 5 Star).
+    mapping(address => uint8) public clubRank;
+    mapping(address => uint256) public clubRewardDebt;
+    /// @notice Royalty owed to 1–4 Star club members and not yet credited.
+    uint256 public clubLiability;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[50] private __gap;
+    uint256[45] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -108,6 +126,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     event FiveStarWeightAdvanced(address indexed account, uint64 weight);
     event SingleLegReentered(address indexed account, uint64 entry, uint256 amount);
     event NonWorkingEntryFunded(address indexed account, uint256 amount);
+    event ClubRoyaltyDistributed(uint8 indexed rank, uint256 amount, uint64 members);
+    event ClubMembershipChanged(address indexed account, uint8 previousClub, uint8 newClub);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -145,6 +165,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         memberCount = 1;
         participants[genesisParticipant_] = Participant(1, 0, address(0), uint64(block.timestamp));
         starRank[genesisParticipant_] = 1;
+        _syncClub(genesisParticipant_);
         singleLegEntries[genesisParticipant_] = 1;
         memberById[1] = genesisParticipant_;
         matrixQueue[0] = genesisParticipant_;
@@ -163,6 +184,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint64 newId = ++memberCount;
         participants[msg.sender] = Participant(newId, 0, sponsor, uint64(block.timestamp));
         starRank[msg.sender] = 1;
+        _syncClub(msg.sender);
         singleLegEntries[msg.sender] = 1;
         participants[sponsor].directCount++;
         memberById[newId] = msg.sender;
@@ -184,17 +206,19 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function claim() external nonReentrant {
+        _syncClub(msg.sender);
+        _settleClub(msg.sender);
         _settleFiveStar(msg.sender);
         uint256 gross = claimable[msg.sender];
         if (gross == 0) revert NothingToClaim();
         claimable[msg.sender] = 0;
         totalClaimedGross += gross;
-        uint256 royalty = gross * 1_700 / BPS;
-        uint256 development = gross * 300 / BPS;
+        uint256 royalty = gross * ROYALTY_BPS / BPS;
+        uint256 development = gross * DEVELOPMENT_BPS / BPS;
         uint256 net = gross - royalty - development;
         paymentToken.safeTransfer(msg.sender, net);
         paymentToken.safeTransfer(developmentFund, development);
-        _distributeFiveStarOrVault(royalty);
+        _distributeRoyalty(royalty);
         emit Claimed(msg.sender, gross, net, royalty, development);
     }
 
@@ -217,6 +241,19 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 accumulated = uint256(fiveStarWeight[account]) * accFiveStarRewardPerMember;
         uint256 debt = fiveStarRewardDebt[account];
         return accumulated > debt ? (accumulated - debt) / ACC : 0;
+    }
+    function pendingClubReward(address account) public view returns (uint256) {
+        uint8 club = clubRank[account];
+        if (club == 0) return 0;
+        uint256 accumulated = accClubRewardPerMember[club];
+        uint256 debt = clubRewardDebt[account];
+        return accumulated > debt ? (accumulated - debt) / ACC : 0;
+    }
+    /// @notice Enrols existing members (by id range) into the 1–4 Star club matching their rank.
+    /// Idempotent and permissionless; run once over all ids after upgrading a live proxy.
+    function syncClubMembers(uint64 fromId, uint64 toId) external nonReentrant {
+        if (toId > memberCount) toId = memberCount;
+        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _syncClub(memberById[id]);
     }
     function settlePoolRewards() external nonReentrant {
         uint256 cap = poolRewardCap(msg.sender);
@@ -279,7 +316,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return _workingUplineBps(level - 1);
     }
     function withdrawable(address account) external view returns (uint256) {
-        return claimable[account] + pendingFiveStarReward(account);
+        return claimable[account] + pendingFiveStarReward(account) + pendingClubReward(account);
     }
     function getParticipant(address account) external view returns (Participant memory) { return participants[account]; }
     function getMatrixChildren(address account) external view returns (address[2] memory) { return matrixChildren[account]; }
@@ -293,7 +330,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 outstandingClaims = totalGrossRewards - totalClaimedGross;
         return paymentToken.balanceOf(address(this))
             >= outstandingClaims + workingReserve + singleLegReserve + nonWorkingReserve + superstarReserve
-                + fiveStarLiability;
+                + fiveStarLiability + clubLiability;
     }
 
     function _placeInMatrix(address account, uint64 position) private {
@@ -339,6 +376,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint8 previous = starRank[account];
         if (next <= previous) return;
         starRank[account] = next;
+        _syncClub(account);
         if (next == 5) {
             fiveStarWeight[account] = 1;
             totalFiveStarWeight++;
@@ -600,6 +638,52 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         fiveStarRewardDebt[account] += amount * ACC;
         fiveStarLiability -= amount;
         _credit(account, amount, keccak256("FIVE_STAR_ROYALTY"));
+    }
+    /// @dev Splits the withdrawal royalty equally across the five star clubs. A club with
+    /// no members forwards its share to the club vault, as the 5 Star club always has.
+    function _distributeRoyalty(uint256 royalty) private {
+        if (royalty == 0) return;
+        uint256 share = royalty / STAR_CLUBS;
+        uint256 toVault;
+        for (uint8 club = 1; club < STAR_CLUBS; ++club) {
+            uint64 members = clubMemberCount[club];
+            if (members == 0) {
+                toVault += share;
+            } else {
+                clubLiability += share;
+                accClubRewardPerMember[club] += share * ACC / members;
+            }
+            emit ClubRoyaltyDistributed(club, share, members);
+        }
+        uint256 fiveStarShare = royalty - share * (STAR_CLUBS - 1);
+        emit ClubRoyaltyDistributed(STAR_CLUBS, fiveStarShare, fiveStarCount);
+        if (toVault > 0) paymentToken.safeTransfer(fiveStarClub, toVault);
+        _distributeFiveStarOrVault(fiveStarShare);
+    }
+    /// @dev Moves an account into the 1–4 Star club matching its rank, settling any royalty earned in its previous club.
+    function _syncClub(address account) private {
+        if (account == address(0)) return;
+        uint8 current = clubRank[account];
+        uint8 target = participants[account].id == 0 ? 0 : starRank[account];
+        if (target >= STAR_CLUBS) target = 0;
+        if (current == target) return;
+        if (current != 0) {
+            _settleClub(account);
+            clubMemberCount[current]--;
+        }
+        clubRank[account] = target;
+        if (target != 0) {
+            clubMemberCount[target]++;
+            clubRewardDebt[account] = accClubRewardPerMember[target];
+        }
+        emit ClubMembershipChanged(account, current, target);
+    }
+    function _settleClub(address account) private {
+        uint256 amount = pendingClubReward(account);
+        if (amount == 0) return;
+        clubRewardDebt[account] += amount * ACC;
+        clubLiability -= amount;
+        _credit(account, amount, keccak256("STAR_CLUB_ROYALTY"));
     }
     function _distributeFiveStarOrVault(uint256 amount) private {
         if (amount == 0) return;

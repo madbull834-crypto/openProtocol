@@ -17,6 +17,7 @@ const streamIcons: Record<string, LucideIcon> = {
   WEEKLY_SUPERSTAR: Trophy,
   POOL_LEVEL_INCOME: Award,
   FIVE_STAR_ROYALTY: Crown,
+  STAR_CLUB_ROYALTY: Crown,
 };
 
 const split = [

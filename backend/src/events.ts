@@ -36,6 +36,7 @@ export const REWARD_REASONS = [
   "WORKING_LEVEL_INCOME",
   "NON_WORKING_MATRIX_INCOME",
   "FIVE_STAR_ROYALTY",
+  "STAR_CLUB_ROYALTY",
 ] as const;
 export type RewardReason = (typeof REWARD_REASONS)[number];
 
