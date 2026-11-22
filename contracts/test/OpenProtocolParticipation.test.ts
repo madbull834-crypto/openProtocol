@@ -80,7 +80,8 @@ describe("OpenProtocolParticipation", function () {
     const { genesis, alice, bob, carol, dave, protocol } = await fixture();
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
-    expect(await protocol.workingLevel(genesis.address)).to.equal(2);
+    // Working Level 1 = 2 directs; Level 2 needs 4 members at depth 2, and there are none.
+    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     // Non-Working fills only with members who reached Single-Leg Level 1; nobody has yet.
     expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
     expect(await protocol.starRank(genesis.address)).to.equal(2);
@@ -179,22 +180,28 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(2);
   });
 
-  it("queues Working Pool level income and pays it from the Working reserve", async function () {
-    const { genesis, alice, bob, carol, dave, protocol } = await fixture();
+  it("reaches Working levels by members at each depth and pays the table income", async function () {
+    const { genesis, alice, bob, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
+    expect(await protocol.workingLevel(genesis.address)).to.equal(0);
     await protocol.connect(bob).register(genesis.address);
-    // Level 1: turnover 30, auto-upgrade 15, distributable 15 -> achiever 80% = 12 USDT.
+    // Level 1 (2 directs): turnover 30, auto-upgrade 15, distributable 15 -> achiever 80% = 12 USDT.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n);
-    await protocol.connect(carol).register(genesis.address);
-    await protocol.connect(dave).register(genesis.address);
-    // Level 2: turnover 60, auto-upgrade 30, distributable 30 -> 24 USDT more.
+    // More directs do not reach Level 2: it needs 4 members at depth 2.
+    await addMembers(protocol, token, genesis.address, 3);
+    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
+    await addMembers(protocol, token, alice.address, 3);
+    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
+    await addMembers(protocol, token, bob.address, 1);
+    // Level 2 (4 at depth 2): turnover 60, auto-upgrade 30, distributable 30 -> 24 USDT more.
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(36_000_000n);
+    // 12 + 24 for its own levels, plus 1.5 as alice's U1 when she reached Level 1 (10% of 15).
+    expect(await protocol.workingLevel(alice.address)).to.equal(1); // alice has 3 directs
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(37_500_000n);
     await expect(protocol.connect(genesis).settlePoolRewards())
       .to.emit(protocol, "RewardCredited")
-      .withArgs(genesis.address, 36_000_000n, ethers.keccak256(ethers.toUtf8Bytes("WORKING_LEVEL_INCOME")));
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
+      .withArgs(genesis.address, 37_500_000n, ethers.keccak256(ethers.toUtf8Bytes("WORKING_LEVEL_INCOME")));
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -213,7 +220,8 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.singleLegReserve()).to.equal(130_000_000n);
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(125_000_000n);
     await protocol.connect(genesis).settlePoolRewards();
-    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(26_000_000n);
+    // 26 USDT Single-Leg plus 12 USDT Working Level 1 (15 directs: Level 2 needs depth-2 members).
+    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(38_000_000n);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -363,11 +371,15 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("lets only the owner clear Non-Working state left by the old rule, skipping entered members", async function () {
+  it("lets only the owner reset levels left by an old rule", async function () {
     const { genesis, alice, protocol } = await fixture();
-    await expect(protocol.connect(alice).resetLegacyNonWorking([genesis.address])).to.be.reverted;
-    await protocol.connect(genesis).resetLegacyNonWorking([genesis.address, alice.address]); // nothing to clear: no-op
+    await expect(protocol.connect(alice).resetLegacyLevels([genesis.address], false)).to.be.reverted;
+    await protocol.connect(genesis).resetLegacyLevels([genesis.address, alice.address], false); // nothing to clear
     expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
+    // Working reset re-derives the level from members at each depth and re-queues its income.
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(genesis).resetLegacyLevels([genesis.address], true);
+    expect(await protocol.workingLevel(genesis.address)).to.equal(0); // one direct: Level 1 needs two
   });
 
   it("uses 9 USDT for a second Single-Leg entry at level three", async function () {

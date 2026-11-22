@@ -119,7 +119,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 public clubLiability;
 
     // ---- Appended in the per-level team upgrade (uses 2 gap slots). ----
-    /// @notice Team members at each sponsor level below an account: level 1 = directs ... level 10.
+    /// @notice Team members at each sponsor level below an account: level 1 = directs ... level 15.
     mapping(address => mapping(uint8 => uint64)) public levelTeamCount;
     /// @notice Whether a member has been added to their uplines' level counts (set on register or by sync).
     mapping(address => bool) public levelTeamRecorded;
@@ -313,15 +313,20 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
     /// @notice Re-checks `account`'s Single-Leg levels. Levels are otherwise re-checked only when
     /// someone joins within the account's 10-level team. Permissionless; pays only what the rules allow.
-    /// @notice One-off cleanup after the Non-Working entry rule: clears levels and queued Non-Working
-    /// income that accounts got under the old whole-team rule without having entered. Entered accounts are skipped.
-    function resetLegacyNonWorking(address[] calldata accounts) external onlyOwner {
+    /// @notice One-off cleanup after a level-rule change. Non-Working: clears levels and queued income an
+    /// account got under the old whole-team rule without having entered. Working (`working` = true): clears
+    /// queued Working income and re-derives the level from members at each depth, re-queuing what it earns.
+    function resetLegacyLevels(address[] calldata accounts, bool working) external onlyOwner {
         for (uint256 i; i < accounts.length; ++i) {
             address account = accounts[i];
-            if (nonWorkingEntryCredit[account] != 0 || nonWorkingLevel[account] == 0) continue;
-            nonWorkingLevel[account] = 0;
-            pendingNonWorkingPoolIncome[account] = 0;
-            emit LevelAdvanced(account, workingLevel[account], 0);
+            if (working) {
+                workingLevel[account] = 0;
+                pendingWorkingPoolIncome[account] = 0;
+                _advanceWorking(account);
+            } else if (nonWorkingEntryCredit[account] == 0) {
+                nonWorkingLevel[account] = 0;
+                pendingNonWorkingPoolIncome[account] = 0;
+            }
         }
     }
     /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
@@ -460,16 +465,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _recordTeamGrowth(address account) private {
         for (uint8 depth; depth < MAX_UPLINE && account != address(0); ++depth) {
             uint64 newTeam = ++teamCount[account];
-            uint8 oldWorking = workingLevel[account];
-            uint8 newWorking = uint8(newTeam / 2 > MAX_WORKING_LEVEL ? MAX_WORKING_LEVEL : newTeam / 2);
-            if (newWorking != oldWorking) {
-                // Working Pool table: 80% to the achiever, 10% to U1, 10% across U2–U9, paid from the Working reserve.
-                for (uint8 level = oldWorking + 1; level <= newWorking; ++level) {
-                    _queueWorkingLevel(account, level);
-                }
-                workingLevel[account] = newWorking;
-                emit LevelAdvanced(account, newWorking, nonWorkingLevel[account]);
-            }
             if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
             _updateFiveStarWeight(account, newTeam);
@@ -482,10 +477,24 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (member == address(0) || levelTeamRecorded[member]) return;
         levelTeamRecorded[member] = true;
         address upline = participants[member].sponsor;
-        for (uint8 level = 1; level <= MAX_UPLINE && upline != address(0); ++level) {
+        for (uint8 level = 1; level <= MAX_WORKING_LEVEL && upline != address(0); ++level) {
             levelTeamCount[upline][level]++;
+            _advanceWorking(upline);
             upline = participants[upline].sponsor;
         }
+    }
+
+    /// @dev Working level L is reached, in order, once the member has 2×L members at referral depth L.
+    /// Each level queues its Working Pool table income: 80% achiever, 10% U1, 10% across U2–U9.
+    function _advanceWorking(address account) private {
+        uint8 level = workingLevel[account];
+        while (level < MAX_WORKING_LEVEL && levelTeamCount[account][level + 1] >= uint64(level + 1) * 2) {
+            ++level;
+            _queueWorkingLevel(account, level);
+        }
+        if (level == workingLevel[account]) return;
+        workingLevel[account] = level;
+        emit LevelAdvanced(account, level, nonWorkingLevel[account]);
     }
 
     function _recordDirect(address member) private {

@@ -5,6 +5,7 @@ import { chainId, protocolAddress } from "./config";
 import { protocolAbi } from "./contracts/abi";
 import { incomeStreams, type IncomeHistory, type SingleLegTeamMember } from "./income";
 
+/** Default depth for team lists (Single-Leg counts 10 levels); the Working matrix reads 15. */
 const MAX_TEAM_DEPTH = 10;
 /** Stops the walk on very large teams; the contract's teamCount still reports the true size. */
 const MAX_TEAM_MEMBERS = 2_000;
@@ -14,17 +15,17 @@ const PAGE = 5_000n;
  * The 10-level sponsor team read straight from the contract: each level's members come from
  * `getDirectReferrals` of the level above, and member details from `getParticipant`.
  */
-export function useOnchainTeam(address?: Address) {
+export function useOnchainTeam(address?: Address, maxDepth = MAX_TEAM_DEPTH) {
   const client = usePublicClient({ chainId });
   return useQuery({
-    queryKey: ["onchain-team", address?.toLowerCase()],
+    queryKey: ["onchain-team", address?.toLowerCase(), maxDepth],
     enabled: Boolean(address && client && protocolAddress),
     refetchInterval: 30_000,
     queryFn: async (): Promise<SingleLegTeamMember[]> => {
       if (!address || !client || !protocolAddress) return [];
       const team: SingleLegTeamMember[] = [];
       let frontier: Address[] = [address];
-      for (let depth = 1; depth <= MAX_TEAM_DEPTH && frontier.length > 0 && team.length < MAX_TEAM_MEMBERS; depth++) {
+      for (let depth = 1; depth <= maxDepth && frontier.length > 0 && team.length < MAX_TEAM_MEMBERS; depth++) {
         const lists = await client.multicall({
           allowFailure: false,
           contracts: frontier.map(sponsor => ({ address: protocolAddress!, abi: protocolAbi, functionName: "getDirectReferrals" as const, args: [sponsor, 0n, PAGE] as const })),

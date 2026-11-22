@@ -1134,11 +1134,12 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   const teamValue = Number(team ?? 0n);
   // Same rule as the contract's `_recordTeamGrowth`: level = min(max, team / 2). Taking the larger value keeps a
   // level shown as complete even if the level read is still loading or lags the team count.
-  const currentLevel = Math.max(contractLevel, Math.min(maxLevel, Math.floor(teamValue / 2)));
+  // Working levels come straight from the contract (depth-based); Non-Working also counts entered members / 2.
+  const currentLevel = kind === "working" ? contractLevel : Math.max(contractLevel, Math.min(maxLevel, Math.floor(teamValue / 2)));
   const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
-  const teamQuery = useOnchainTeam(address);
+  const teamQuery = useOnchainTeam(address, kind === "working" ? 15 : 10);
   // Non-Working positions hold only team members who entered (reached Single-Leg Level 1).
   const entryReads = useReadContracts({
     allowFailure: true,
@@ -1152,17 +1153,19 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   const teamInOrder = [...eligibleTeam].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
   const quote = quotes[selectedLevel - 1];
   const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
-  // Working Level 1 holds every direct referral (unlimited); 2 of them are the advancement milestone.
-  // Every other level holds exactly its contract team requirement (4 at Level 2, 6 at Level 3, ...).
-  const unlimited = kind === "working" && selectedLevel === 1;
-  const directs = teamInOrder.filter(member => member.depth === 1);
-  const holders = unlimited ? directs : teamInOrder;
-  const filledCount = unlimited && teamQuery.data ? directs.length : Math.min(teamValue, required);
+  // Working levels hold the members at that referral depth (Level 1 = directs, Level 2 = their referrals, ...),
+  // with no limit, so nobody appears in two levels. The level's team requirement is the milestone.
+  const unlimited = kind === "working";
+  const depthMembers = teamInOrder.filter(member => member.depth === selectedLevel);
+  const holders = unlimited ? depthMembers : teamInOrder;
+  const filledCount = unlimited ? (teamQuery.data ? depthMembers.length : 0) : Math.min(teamValue, required);
   const nodeCount = unlimited ? Math.max(required, filledCount) : required;
   const positions = Array.from({ length: nodeCount }, (_, index) => index + 1);
   const filledInLevel = Math.min(filledCount, required);
   // A level stays "In progress" once any of its positions is filled: levels keep accepting users, so none is shown as complete.
-  const levelActive = (level: number) => currentLevel >= level || teamValue >= level * 2 - 1;
+  // Working: In progress once someone is at that referral depth. Non-Working: once the level's positions start filling.
+  const levelActive = (level: number) => currentLevel >= level
+    || (kind === "working" ? teamInOrder.some(member => member.depth === level) : teamValue >= level * 2 - 1);
   // Non-Working levels are marked Complete once filled; Working levels stay In progress (unlimited users).
   const completes = kind === "nonworking";
   const levelState = (level: number) => completes && currentLevel >= level ? "reached" : levelActive(level) ? "current" : "locked";
@@ -1211,11 +1214,11 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         ? <p className="pool-wallet-note">Connect your wallet to view this {name.toLowerCase()} team.</p>
         : teamQuery.isError && <p className="pool-wallet-note">Team service is unavailable right now. Positions are counted from the contract.</p>}
       <div className="pool-level-copy">
-        <b>{teamQuery.isLoading && address ? "Loading team…" : unlimited ? `${filledCount} direct ${filledCount === 1 ? "member" : "members"} in this working level · unlimited` : `${filledInLevel} of ${required} users in this ${name.toLowerCase()} level`}</b>
+        <b>{teamQuery.isLoading && address ? "Loading team…" : unlimited ? `${filledCount} ${selectedLevel === 1 ? "direct " : ""}${filledCount === 1 ? "member" : "members"} in this working level · unlimited` : `${filledInLevel} of ${required} users in this ${name.toLowerCase()} level`}</b>
         <span>{reached && completes ? "Complete · level filled" : reached ? "In progress · accepting unlimited users" : current ? "In progress · position awaiting activation" : "Locked · waiting for team members"}</span>
       </div>
       <div className="pool-focus-progress"><i style={{ width: `${filledInLevel / required * 100}%` }}/></div>
-      <p>{unlimited ? <>Level 1 holds all your direct referrals with no limit. The first {required} complete the advancement milestone.</> : <>Level {selectedLevel} needs {required} team members. Positions fill in the order members joined your team.</>}<br/>Every {name} level accepts unlimited users beyond the initial advancement milestone.</p>
+      <p>{unlimited ? <>{selectedLevel === 1 ? "Level 1 holds all your direct referrals" : `Level ${selectedLevel} holds everyone ${selectedLevel} levels down your referral tree`}, with no limit. The first {required} complete the level's milestone.</> : <>Level {selectedLevel} needs {required} team members. Positions fill in the order members joined your team.</>}<br/>Every {name} level accepts unlimited users beyond the initial advancement milestone.</p>
     </div>
 
     <div className="pool-economics">
