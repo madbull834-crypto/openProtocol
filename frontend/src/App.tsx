@@ -1312,8 +1312,8 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
 
 /** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
 const SINGLE_LEG_TABLE = [
-  [10, 1, 11, 5, 1], [15, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
-  [600, 11, 500, 0, 30], [1_000, 14, 1_500, 0, 100], [1_500, 17, 3_500, 0, 400], [2_500, 21, 10_000, 0, 1_000], [3_700, 25, 15_000, 0, 2_500],
+  [10, 1, 11, 5, 1], [25, 2, 15, 0, 2], [55, 3, 35, 9, 3], [115, 5, 50, 0, 5], [365, 8, 150, 0, 10],
+  [965, 11, 500, 0, 30], [1_965, 14, 1_500, 0, 100], [3_465, 17, 3_500, 0, 400], [5_965, 21, 10_000, 0, 1_000], [9_665, 25, 15_000, 0, 2_500],
 ] as const;
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -1395,12 +1395,16 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
       <div className="sl-row sl-th" role="row"><span>Level</span><span>Team needed</span><span>Direct referrals</span><span>Your reward</span><span>Status</span></div>
       {levels.map(l => {
         const state = l.level <= done ? "done" : l.level === done + 1 ? "next" : "locked";
+        // Team totals add up level by level; show progress within the level being filled.
+        const previous = l.level === 1 ? 0 : levels[l.level - 2].members;
+        const step = l.members - previous;
+        const filled = Math.min(step, Math.max(0, teamValue - previous));
         return <div className={`sl-row ${state}`} role="row" key={l.level}>
           <span className="sl-lvl"><i>{state === "done" ? <Check size={13}/> : l.level}</i><em>Level {l.level}</em></span>
-          <span data-label="Team">{l.members.toLocaleString()}</span>
+          <span data-label="Team">{l.members.toLocaleString()}{l.level > 1 && <small> (+{step.toLocaleString()})</small>}</span>
           <span data-label="Directs">{l.directs}</span>
           <span data-label="Reward" className="sl-amt"><span>{usdt(netReward(l))} USDT{allocationNote(l) && <small>{allocationNote(l)}</small>}</span></span>
-          <span className="sl-status">{state === "done" ? "Unlocked" : state === "next" ? "In progress" : "Locked"}</span>
+          <span className="sl-status">{state === "done" ? "Complete" : state === "next" ? `In progress · ${filled.toLocaleString()} / ${step.toLocaleString()}` : "Locked"}</span>
         </div>;
       })}
     </div>

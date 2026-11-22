@@ -132,10 +132,10 @@ describe("OpenProtocolParticipation", function () {
       10n, 1n, 11_000_000n, 5_000_000n, 1_000_000n, 1_000_000n,
     ]);
     expect(await protocol.singleLegQuote(2)).to.deep.equal([
-      15n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
+      25n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
     ]);
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
-      30n, 3n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
+      55n, 3n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
     ]);
     // Directs add up level by level: 1, 2, 3, 5, 8, 11, 14, 17, 21, 25.
     const totals = [];
@@ -156,7 +156,7 @@ describe("OpenProtocolParticipation", function () {
       30n, 40_960_000_000n, 1_228_800_000_000n, 0n, 1_228_800_000_000n,
     ]);
     expect(await protocol.singleLegQuote(10)).to.deep.equal([
-      3_700n, 25n, 15_000_000_000n, 0n, 2_500_000_000n, 2_500_000_000n,
+      9_665n, 25n, 15_000_000_000n, 0n, 2_500_000_000n, 2_500_000_000n,
     ]);
     const bps = [];
     for (let level = 1; level <= 9; level++) bps.push(await protocol.tenLevelPercentageBps(level));
@@ -207,11 +207,13 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(11_000_000n);
     expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
     expect(await protocol.nonWorkingReserve()).to.equal(5_000_000n);
-    await addMembers(protocol, token, genesis.address, 5);
+    await addMembers(protocol, token, genesis.address, 14);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(1); // 24 after: Level 2 needs 25
+    await addMembers(protocol, token, genesis.address, 1);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(26_000_000n);
     expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
-    expect(await protocol.singleLegReserve()).to.equal(130_000_000n);
+    expect(await protocol.singleLegReserve()).to.equal(220_000_000n); // 25 × 9 − 5 redirect
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(125_000_000n);
     await protocol.connect(genesis).settlePoolRewards();
     // 26 USDT Single-Leg plus 12 USDT Working Level 1 (15 directs: Level 2 needs depth-2 members).
@@ -352,8 +354,8 @@ describe("OpenProtocolParticipation", function () {
     expect(info.primary).to.equal(2);
     expect(info.line).to.equal(13);
     expect(await protocol.lineOwnerAt(2)).to.equal(alice.address);
-    // 15+ after her but still 1 direct: Level 2 needs 2 directs in total.
-    await addMembers(protocol, token, genesis.address, 5);
+    // 25 after her but still 1 direct: Level 2 needs 25 after and 2 directs in total.
+    await addMembers(protocol, token, genesis.address, 14);
     expect(await protocol.singleLegLevel(alice.address)).to.equal(1);
     await addMembers(protocol, token, alice.address, 1);
     expect(await protocol.singleLegLevel(alice.address)).to.equal(2);
@@ -361,12 +363,12 @@ describe("OpenProtocolParticipation", function () {
 
   it("re-enters at Level 3 with a new position that climbs and pays again", async function () {
     const { genesis, protocol, token } = await fixture();
-    await addMembers(protocol, token, genesis.address, 30);
-    // 30 joined after genesis: Level 3 ($35) and a re-entry at the end of the line.
+    await addMembers(protocol, token, genesis.address, 55);
+    // 55 joined after genesis (10 + 15 + 30): Level 3 ($35) and a re-entry at the end of the line.
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(3);
     expect(await protocol.singleLegEntries(genesis.address)).to.equal(2);
     expect(await protocol.singleLegReentries(genesis.address)).to.equal(1);
-    expect(await protocol.reentryPosition(genesis.address)).to.equal(32);
+    expect(await protocol.reentryPosition(genesis.address)).to.equal(57);
     const before = await protocol.pendingSingleLegIncome(genesis.address);
     await addMembers(protocol, token, genesis.address, 10);
     // 10 after the re-entry position: it reaches Level 1 and pays $11 again.

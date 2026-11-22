@@ -754,17 +754,19 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 5 * (2 ** (level - 2));
     }
 
+    /// @dev Total positions needed after yours: the table's per-level team (10, 15, 30, 60, 250, 600,
+    /// 1,000, 1,500, 2,500, 3,700) added up.
     function _singleLegMembers(uint8 level) private pure returns (uint64) {
         if (level == 1) return 10;
-        if (level == 2) return 15;
-        if (level == 3) return 30;
-        if (level == 4) return 60;
-        if (level == 5) return 250;
-        if (level == 6) return 600;
-        if (level == 7) return 1_000;
-        if (level == 8) return 1_500;
-        if (level == 9) return 2_500;
-        return 3_700;
+        if (level == 2) return 25;
+        if (level == 3) return 55;
+        if (level == 4) return 115;
+        if (level == 5) return 365;
+        if (level == 6) return 965;
+        if (level == 7) return 1_965;
+        if (level == 8) return 3_465;
+        if (level == 9) return 5_965;
+        return 9_665;
     }
 
     /// @dev Total directs for a Single-Leg level: the table's per-level directs (1,1,1,2,3,3,3,3,4,4) added up.
