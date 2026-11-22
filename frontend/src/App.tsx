@@ -1064,8 +1064,6 @@ function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs:
   const usdt = (value: bigint) => `${formatToken(value)} USDT`;
   const [u1, u2, u3, deep] = rules.uplineBps;
   const deepCount = rules.uplineBps.length - 3;
-  const distributedBps = rules.directShareBps + rules.uplineBps.reduce((sum, bps) => sum + bps, 0n);
-  const reserveBps = 10_000n - distributedBps;
   const directIncome = share(rules.directShareBps);
   const allocLabel = formatToken(alloc);
   const rows = [
@@ -1074,7 +1072,6 @@ function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs:
     ["Sponsor's U2", pct(u2), usdt(share(u2)), "Second eligible upline"],
     ["Sponsor's U3", pct(u3), usdt(share(u3)), "Third eligible upline"],
     [`Sponsor's U4–U${deepCount + 3}`, `${pct(deep)} each`, `${usdt(share(deep))} each`, `${deepCount} eligible upline levels`],
-    ["Working reserve", pct(reserveBps), usdt(share(reserveBps)), "Undistributed remainder"],
   ] as const;
   return <div className="progression-view">
     <div className="view-heading"><div><small>{allocLabel} USDT WORKING MATRIX</small><h4>Direct and nine-level distribution</h4></div><p>Your first {need} direct referrals activate Working Matrix income. Every direct after that pays the {pct(rules.directShareBps)} sponsor share.</p></div>
@@ -1086,7 +1083,6 @@ function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs:
     <div className="pool-economics">
       <div className="pool-economics-head"><div><small>PER REGISTRATION</small><h4>Exact {allocLabel} USDT distribution</h4></div><div className="pool-selected-summary"><span>Upline eligibility</span><b>{need} direct referrals</b></div></div>
       <div className="pool-table-wrap"><table className="pool-table"><thead><tr><th>Recipient</th><th>Share</th><th>Amount</th><th>Rule</th></tr></thead><tbody>{rows.map(([recipient, share, amount, rule]) => <tr key={recipient}><td data-label="Recipient">{recipient}</td><td data-label="Share">{share}</td><td data-label="Amount">{amount}</td><td data-label="Rule">{rule}</td></tr>)}</tbody></table></div>
-      <p className="tree-disclaimer">Missing or inactive uplines are not replaced. Their unpaid shares remain in the Working reserve. The Working Matrix distributes {pct(distributedBps)} and retains {pct(reserveBps)} per registration.</p>
     </div>
   </div>;
 }
