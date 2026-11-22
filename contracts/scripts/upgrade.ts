@@ -19,7 +19,8 @@ async function main() {
   for (let from = 1n; from <= memberCount; from += batch) {
     const to = from + batch - 1n;
     await (await protocol.syncClubMembers(from, to)).wait();
-    console.log(`Synced club membership for ids ${from}-${to < memberCount ? to : memberCount}`);
+    await (await protocol.syncLevelTeam(from, to)).wait();
+    console.log(`Synced club membership and level team counts for ids ${from}-${to < memberCount ? to : memberCount}`);
   }
   // Read after the sync transactions so public RPCs have caught up with the upgrade block.
   const implementation = await upgrades.erc1967.getImplementationAddress(proxyAddress);

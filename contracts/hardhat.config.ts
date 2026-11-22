@@ -33,6 +33,8 @@ const config: HardhatUserConfig = {
       url: process.env.BSC_TESTNET_RPC_URL ?? "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
       chainId: 97,
       accounts: key ? [key] : [],
+      // BSC Testnet rejects priority fees under 0.1 gwei; ethers' estimate can fall below that.
+      gasPrice: 1_000_000_000,
     },
   },
   etherscan: {

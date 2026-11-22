@@ -953,3 +953,107 @@ i.dev{background:linear-gradient(90deg,#1477d6,var(--blue))}
 @media (prefers-reduced-motion:reduce){.superstar-club:before,.ss-glow,.ss-sparkles i,.ss-trophy,.ss-main h4,.ss-badge{animation:none}}
 @media (max-width:1100px){.club-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.ss-stats{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:640px){.club-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ss-main{flex-wrap:wrap}.ss-badge{margin-left:0}.ss-main h4{font-size:22px}}
+/* Working Matrix: position architecture + contract economics (matches design reference) */
+.pool-matrix-view.working{--pool-accent:#38bdf8;--pool-accent-2:#0284c7;--pool-soft:rgba(56,189,248,.14);--pool-deep:rgba(2,132,199,.13)}
+.pool-arch-head{justify-self:stretch;margin-bottom:34px;padding-bottom:20px;border-bottom:1px solid rgba(255,255,255,.07);text-align:left}
+.pool-arch-head small{color:#f0c75e;font-size:11px;font-weight:800;letter-spacing:.18em}.pool-arch-head h4{margin:8px 0 0;font-size:30px;letter-spacing:-.02em}
+.pool-matrix-view .pool-completion{background:linear-gradient(100deg,#f2fdf8,#ece4ff);border-color:transparent}
+.pool-matrix-view .pool-completion{background:linear-gradient(100deg,#f2fdf8,color-mix(in srgb,var(--pool-accent) 16%,white))}.pool-matrix-view .pool-completion span{color:color-mix(in srgb,var(--pool-accent) 80%,black)}.pool-matrix-view .pool-completion b{color:color-mix(in srgb,var(--pool-accent) 85%,black)}
+.pool-position.available{border-style:dashed}
+.pool-wallet-note{margin-top:22px;color:#b9a6ff!important;font-size:13px!important}
+.pool-wallets{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;max-width:640px;margin-top:22px}
+.pool-wallet{display:grid;grid-template-columns:auto auto;align-items:center;column-gap:8px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--pool-accent) 45%,transparent);border-radius:10px;background:var(--pool-soft)}
+.pool-wallet>span{grid-row:span 2;display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:linear-gradient(145deg,#2ec4a0,#1d9b7f);color:#fff}
+.pool-wallet b{font-size:12px}.pool-wallet small{color:color-mix(in srgb,var(--pool-accent) 70%,white);font-size:10px}
+.pool-wallet.more{grid-template-columns:auto;justify-items:center}
+.pool-kind-toggle{display:flex;gap:4px;padding:5px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:#05080f}
+.pool-kind-toggle button{padding:11px 22px;border:0;border-radius:8px;background:none;color:#b69bff;font-size:15px;font-weight:700;cursor:pointer;transition:background .2s,color .2s}
+.pool-kind-toggle button.active{background:linear-gradient(110deg,#e9c46a,#d8b25a);color:#0b0f18}
+.pool-kind-toggle button:not(.active):hover{color:#d9cbff}
+.pool-matrix-view .pool-table th{border-bottom-color:rgba(240,199,94,.35);background:linear-gradient(180deg,rgba(91,65,14,.32),rgba(12,12,16,.9));color:#f3d379;font-size:12px;letter-spacing:.12em}
+.pool-table th.num,.pool-table td.num{text-align:right}
+.pool-table td{font-size:15px}.pool-table td.income{color:#ffe39a}
+.pool-matrix-view .pool-status{padding:5px 12px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.pool-table tr.reached .pool-status{background:rgba(46,196,160,.14);color:#77dfc5}.pool-table tr.current .pool-status{background:rgba(240,199,94,.16);color:#ffd98a}
+@media (max-width:720px){.pool-kind-toggle{width:100%}.pool-kind-toggle button{flex:1;padding:10px 8px;font-size:13px}.pool-arch-head h4{font-size:24px}.pool-table th.num,.pool-table td.num{text-align:left}}
+/* Level picker for Working / Non-Working matrix */
+.pool-level-picker{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:720px;margin:0 0 26px}
+.pool-level-picker button{display:inline-flex;align-items:center;gap:4px;min-width:46px;justify-content:center;padding:7px 10px;border:1px solid rgba(255,255,255,.1);border-radius:8px;background:rgba(255,255,255,.03);color:#8d8aa8;font-size:12px;font-weight:700;cursor:pointer;transition:background .15s,border-color .15s,color .15s,transform .15s}
+.pool-level-picker button:hover{border-color:color-mix(in srgb,var(--pool-accent) 60%,transparent);color:#fff;transform:translateY(-1px)}
+.pool-level-picker button.reached{border-color:rgba(46,196,160,.35);color:#77dfc5}
+.pool-level-picker button.current{border-color:rgba(240,199,94,.55);color:#ffd98a}
+.pool-level-picker button.active{border-color:var(--pool-accent);background:linear-gradient(135deg,var(--pool-accent),var(--pool-accent-2));color:#fff;box-shadow:0 6px 18px color-mix(in srgb,var(--pool-accent) 35%,transparent)}
+.pool-level-stepper{display:flex;align-items:center;gap:6px}
+.pool-level-stepper button{display:grid;place-items:center;width:28px;height:28px;border:1px solid color-mix(in srgb,var(--pool-accent) 40%,transparent);border-radius:8px;background:var(--pool-soft);color:#fff;cursor:pointer}
+.pool-level-stepper button:disabled{opacity:.3;cursor:default}
+.pool-level-stepper button:not(:disabled):hover{background:var(--pool-accent)}
+@media (max-width:720px){.pool-level-picker{gap:5px}.pool-level-picker button{min-width:40px;padding:6px 7px;font-size:11px}.pool-position-card .pool-level-stepper{grid-column:2}}
+/* Level tree: one node per team member the level requires (2 × level) */
+.pool-tree{position:relative;display:grid;grid-template-columns:repeat(var(--cols),minmax(0,112px));justify-content:center;gap:14px;width:100%;margin-top:34px;padding-top:30px}
+.pool-tree:before{content:"";position:absolute;top:0;left:calc(50% - min(45%, calc(var(--cols) * 63px)));right:calc(50% - min(45%, calc(var(--cols) * 63px)));height:18px;border:2px solid color-mix(in srgb,var(--pool-accent) 62%,transparent);border-bottom:0;border-radius:10px 10px 0 0}
+.pool-node{position:relative;display:grid;justify-items:center;align-content:start;gap:6px;min-height:118px;padding:14px 6px 10px;border:1px solid color-mix(in srgb,var(--pool-accent) 62%,transparent);border-radius:12px;background:linear-gradient(155deg,color-mix(in srgb,var(--pool-accent) 9%,transparent),rgba(5,8,16,.9));text-align:center}
+.pool-node:before{content:"";position:absolute;top:-13px;left:50%;width:2px;height:12px;background:color-mix(in srgb,var(--pool-accent) 55%,transparent)}
+.pool-node.available{border-style:dashed;opacity:.85}
+.pool-node i{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;background:var(--pool-soft);color:color-mix(in srgb,var(--pool-accent) 70%,white);font-size:15px;font-style:normal;font-weight:800}
+.pool-node.filled i{background:linear-gradient(145deg,var(--pool-accent),var(--pool-accent-2));color:#fff;box-shadow:0 6px 16px color-mix(in srgb,var(--pool-accent) 35%,transparent)}
+.pool-node b{color:color-mix(in srgb,var(--pool-accent) 70%,white);font-size:10.5px;letter-spacing:.1em}
+.pool-node small{color:var(--ink-3);font-size:10px}.pool-node.filled small{color:#d5dce8}
+.pool-node em{padding:2px 7px;border-radius:5px;background:rgba(46,196,160,.12);color:#77dfc5;font-size:9px;font-style:normal;font-weight:700}
+.pool-tree.dense{gap:10px}.pool-tree.dense .pool-node{min-height:96px;padding:10px 4px 8px}.pool-tree.dense .pool-node i{width:30px;height:30px;font-size:12px}
+@media (max-width:900px){.pool-tree{grid-template-columns:repeat(auto-fit,minmax(96px,112px))}}
+@media (max-width:520px){.pool-tree{grid-template-columns:repeat(2,minmax(0,1fr))}.pool-tree:before{left:20%;right:20%}}
+/* Matrix views: replace gold with the matrix accent (teal for Working, purple for Global/Non-Working) */
+.pool-matrix-view .pool-arch-head small,.pool-matrix-view .pool-economics-head small{color:color-mix(in srgb,var(--pool-accent) 72%,white)}
+.pool-matrix-view .pool-economics-head h4,.pool-matrix-view .pool-arch-head h4{background:linear-gradient(100deg,#fff 30%,color-mix(in srgb,var(--pool-accent) 45%,white));-webkit-background-clip:text;background-clip:text;color:transparent}
+.pool-matrix-view .pool-table th{border-bottom-color:color-mix(in srgb,var(--pool-accent) 40%,transparent);background:linear-gradient(180deg,color-mix(in srgb,var(--pool-accent) 15%,#0a0f18),#070b12);color:color-mix(in srgb,var(--pool-accent) 52%,white)}
+.pool-matrix-view .pool-kind-toggle{border-color:color-mix(in srgb,var(--pool-accent) 22%,transparent)}
+.pool-matrix-view .pool-kind-toggle button{color:color-mix(in srgb,var(--pool-accent) 58%,white)}
+.pool-matrix-view .pool-kind-toggle button.active{background:linear-gradient(110deg,var(--pool-accent),var(--pool-accent-2));color:#fff;box-shadow:0 6px 18px color-mix(in srgb,var(--pool-accent) 30%,transparent)}
+.pool-matrix-view .pool-table td.income{color:color-mix(in srgb,var(--pool-accent) 42%,white);font-weight:700}
+.pool-matrix-view .pool-table tr.current .pool-status{border:1px solid color-mix(in srgb,var(--pool-accent) 38%,transparent);background:color-mix(in srgb,var(--pool-accent) 15%,transparent);color:color-mix(in srgb,var(--pool-accent) 55%,white)}
+.pool-matrix-view .pool-level-picker button.current{border-color:color-mix(in srgb,var(--pool-accent) 55%,transparent);color:color-mix(in srgb,var(--pool-accent) 60%,white)}
+/* Working Matrix — palette from the "Working Pool Income" slides: royal blue, black, cyan grid, neon green accent */
+.pool-matrix-view.working{--pool-accent:#2f7bff;--pool-accent-2:#0a3dcc;--pool-soft:rgba(47,123,255,.16);--pool-deep:rgba(10,61,204,.16);--wm-cyan:#38c8f8;--wm-green:#43e83a;--wm-blue:#0b2f9e;--wm-navy:#061a66}
+.pool-matrix-view.working .pool-matrix-focus,.pool-matrix-view.working .pool-economics{border-color:rgba(56,200,248,.45);background:radial-gradient(700px 260px at 50% -6%,rgba(47,123,255,.22),transparent 70%),linear-gradient(160deg,#050b1c,#02050d 60%);box-shadow:0 0 0 1px rgba(56,200,248,.08),0 24px 70px rgba(0,0,0,.5),0 0 40px rgba(47,123,255,.12)}
+.pool-matrix-view.working .pool-arch-head small,.pool-matrix-view.working .pool-economics-head small{color:var(--wm-green);text-shadow:0 0 12px rgba(67,232,58,.35)}
+.pool-matrix-view.working .pool-arch-head h4,.pool-matrix-view.working .pool-economics-head h4{background:none;-webkit-background-clip:initial;background-clip:initial;color:#fff;font-style:italic;font-weight:800;letter-spacing:-.01em}
+.pool-matrix-view.working .pool-arch-head,.pool-matrix-view.working .pool-economics-head{border-bottom-color:rgba(56,200,248,.25)}
+.pool-matrix-view.working .pool-completion{border:1px solid rgba(56,200,248,.55);background:linear-gradient(100deg,var(--wm-blue),var(--wm-navy));box-shadow:0 0 18px rgba(47,123,255,.25)}
+.pool-matrix-view.working .pool-completion span{color:#cfe3ff}.pool-matrix-view.working .pool-completion b{color:var(--wm-green)}
+.pool-matrix-view.working .pool-node.filled i{background:linear-gradient(145deg,#3b8bff,var(--wm-blue));box-shadow:0 0 14px rgba(56,200,248,.45)}
+.pool-matrix-view.working .pool-node{border-color:rgba(56,200,248,.5);background:linear-gradient(155deg,rgba(11,47,158,.35),#02050d)}
+.pool-matrix-view.working .pool-node b{color:#9fd8ff}
+.pool-matrix-view.working .pool-focus-progress i{background:linear-gradient(90deg,var(--wm-blue),var(--wm-cyan),var(--wm-green))}
+.pool-matrix-view.working .pool-level-picker button.active{background:linear-gradient(135deg,#2f7bff,var(--wm-blue));border-color:var(--wm-cyan);box-shadow:0 0 16px rgba(56,200,248,.4)}
+.pool-matrix-view.working .pool-level-picker button.current{border-color:rgba(56,200,248,.6);color:#9fd8ff}
+.pool-matrix-view.working .pool-kind-toggle{border-color:rgba(56,200,248,.35);background:#02050d}
+.pool-matrix-view.working .pool-kind-toggle button{color:#9fd8ff}
+.pool-matrix-view.working .pool-kind-toggle button.active{background:linear-gradient(110deg,#2f7bff,var(--wm-blue));box-shadow:0 0 16px rgba(47,123,255,.45);color:#fff}
+/* Table: blue header, cyan grid, alternating blue / black columns */
+.pool-matrix-view.working .pool-table-wrap{border:1px solid rgba(56,200,248,.7);border-radius:10px;background:#02050d;box-shadow:0 0 22px rgba(47,123,255,.25)}
+.pool-matrix-view.working .pool-table th{background:linear-gradient(180deg,#123dbd,var(--wm-navy));color:#fff;font-weight:800;letter-spacing:.08em;border-bottom:1px solid rgba(56,200,248,.7);border-right:1px solid rgba(56,200,248,.3);text-align:center}
+.pool-matrix-view.working .pool-table td{border-bottom:1px solid rgba(56,200,248,.28);border-right:1px solid rgba(56,200,248,.18);color:#fff;font-weight:700;text-align:center}
+.pool-matrix-view.working .pool-table th:last-child,.pool-matrix-view.working .pool-table td:last-child{border-right:0}
+.pool-matrix-view.working .pool-table td:nth-child(odd){background:linear-gradient(180deg,rgba(11,47,158,.55),rgba(6,26,102,.55))}
+.pool-matrix-view.working .pool-table td:nth-child(even){background:#02050d}
+.pool-matrix-view.working .pool-table td.income{color:#fff}
+.pool-matrix-view.working .pool-table tbody tr:hover td{filter:brightness(1.25)}
+.pool-matrix-view.working .pool-table tbody tr.selected{box-shadow:inset 3px 0 var(--wm-cyan)}
+.pool-matrix-view.working .pool-table tbody tr.selected td{color:var(--wm-cyan);background-image:linear-gradient(90deg,rgba(56,200,248,.14),rgba(56,200,248,.06))}
+.pool-matrix-view.working .pool-table tr.current .pool-status{border-color:rgba(67,232,58,.45);background:rgba(67,232,58,.12);color:var(--wm-green)}
+.pool-matrix-view.working .pool-table tr.locked .pool-status{background:rgba(56,200,248,.1);color:#8fbfe8}
+.pool-matrix-view.working .tree-disclaimer{color:#8fb4dd}
+/* Team overview: total + per-level counts */
+.team-levels-body{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px;margin-top:18px}
+.team-total{display:grid;align-content:center;gap:6px;padding:20px;border:1px solid rgba(56,189,248,.4);border-radius:12px;background:radial-gradient(220px 140px at 0 0,rgba(47,123,255,.28),transparent 70%),linear-gradient(160deg,#0b1c3a,#040a16)}
+.team-total small{color:#9fc4ec;font-size:12px}.team-total b{font-family:Orbitron,var(--font);font-size:38px;line-height:1.1;color:#fff}.team-total em{color:#7fa3c9;font-size:11.5px;font-style:normal}
+.team-level-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.team-level-grid>div{display:grid;gap:3px;padding:12px 13px;border:1px solid rgba(52,95,142,.4);border-radius:10px;background:#040b15}
+.team-level-grid>div.has{border-color:rgba(56,189,248,.45);background:linear-gradient(160deg,rgba(11,47,158,.28),#040b15)}
+.team-level-grid small{color:#7f95b2;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.team-level-grid b{font-size:22px;color:#fff}.team-level-grid>div:not(.has) b{color:#5d6f88}
+.team-level-grid span{color:#6f86a3;font-size:10.5px}
+.team-level-grid i{display:block;height:4px;margin-top:6px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.06)}
+.team-level-grid i em{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#2f7bff,#38c8f8)}
+@media (max-width:900px){.team-levels-body{grid-template-columns:1fr}.team-level-grid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media (max-width:560px){.team-level-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

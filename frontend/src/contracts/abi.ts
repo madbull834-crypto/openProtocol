@@ -13,6 +13,7 @@ export const protocolAbi = [
   { type: "function", name: "autoUpgradeCredit", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "claimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "pendingFiveStarReward", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "getLevelTeamCounts", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64[10]" }] },
   { type: "function", name: "pendingClubReward", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "clubMemberCount", stateMutability: "view", inputs: [{ name: "rank", type: "uint8" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "fiveStarCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },

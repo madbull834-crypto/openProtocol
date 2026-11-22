@@ -17,6 +17,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 private constant WEEK = 7 days;
     uint8 private constant MAX_UPLINE = 10;
     uint8 private constant MAX_WORKING_UPLINE = 9;
+    /// @dev Working Pool table levels 1–15 (team 2–30), per the published programme.
+    uint8 private constant MAX_WORKING_LEVEL = 15;
     /// @notice Share of every withdrawal that funds the 1–5 Star royalty clubs.
     uint256 public constant ROYALTY_BPS = 1_500;
     /// @notice Share of every withdrawal sent to the development fund.
@@ -108,9 +110,15 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Royalty owed to 1–4 Star club members and not yet credited.
     uint256 public clubLiability;
 
+    // ---- Appended in the per-level team upgrade (uses 2 gap slots). ----
+    /// @notice Team members at each sponsor level below an account: level 1 = directs ... level 10.
+    mapping(address => mapping(uint8 => uint64)) public levelTeamCount;
+    /// @notice Whether a member has been added to their uplines' level counts (set on register or by sync).
+    mapping(address => bool) public levelTeamRecorded;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[45] private __gap;
+    uint256[43] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -190,6 +198,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         memberById[newId] = msg.sender;
         _placeInMatrix(msg.sender, newId);
         _recordTeamGrowth(sponsor);
+        _recordLevelTeam(msg.sender);
         _recordWeeklyDirect(sponsor);
 
         totalParticipated += ticketPrice;
@@ -255,6 +264,16 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (toId > memberCount) toId = memberCount;
         for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _syncClub(memberById[id]);
     }
+    /// @notice Team size at each of the 10 sponsor levels below `account` (index 0 = level 1 = directs).
+    function getLevelTeamCounts(address account) external view returns (uint64[10] memory counts) {
+        for (uint8 level = 1; level <= MAX_UPLINE; ++level) counts[level - 1] = levelTeamCount[account][level];
+    }
+    /// @notice Adds members registered before per-level counting to their uplines' counts.
+    /// Idempotent and permissionless; run once over all ids after upgrading a live proxy.
+    function syncLevelTeam(uint64 fromId, uint64 toId) external nonReentrant {
+        if (toId > memberCount) toId = memberCount;
+        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordLevelTeam(memberById[id]);
+    }
     function settlePoolRewards() external nonReentrant {
         uint256 cap = poolRewardCap(msg.sender);
         uint256 credited = rankedPoolRewardsCredited[msg.sender];
@@ -283,11 +302,11 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function workingLevelQuote(uint8 level)
         external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
     {
-        if (level == 0 || level > 8) revert InvalidLevel(level);
+        if (level == 0 || level > MAX_WORKING_LEVEL) revert InvalidLevel(level);
         team = uint256(level) * 2;
         idAmount = _workingIdAmount(level) * tokenUnit;
         turnover = team * idAmount;
-        autoUpgrade = level < 8 ? _workingIdAmount(level + 1) * tokenUnit : 0;
+        autoUpgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
         distributable = turnover - autoUpgrade;
     }
     function nonWorkingLevelQuote(uint8 level)
@@ -348,7 +367,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             uint64 newTeam = ++teamCount[account];
             uint8 oldWorking = workingLevel[account];
             uint8 oldNonWorking = nonWorkingLevel[account];
-            uint8 newWorking = uint8(newTeam / 2 > 8 ? 8 : newTeam / 2);
+            uint8 newWorking = uint8(newTeam / 2 > MAX_WORKING_LEVEL ? MAX_WORKING_LEVEL : newTeam / 2);
             uint8 newNonWorking = uint8(newTeam / 2 > 15 ? 15 : newTeam / 2);
             if (newWorking != oldWorking || newNonWorking != oldNonWorking) {
                 for (uint8 level = oldNonWorking + 1; level <= newNonWorking; ++level) {
@@ -363,6 +382,16 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             _updateFiveStarWeight(account, newTeam);
             _processSingleLeg(account);
             account = participants[account].sponsor;
+        }
+    }
+
+    function _recordLevelTeam(address member) private {
+        if (member == address(0) || levelTeamRecorded[member]) return;
+        levelTeamRecorded[member] = true;
+        address upline = participants[member].sponsor;
+        for (uint8 level = 1; level <= MAX_UPLINE && upline != address(0); ++level) {
+            levelTeamCount[upline][level]++;
+            upline = participants[upline].sponsor;
         }
     }
 
@@ -424,7 +453,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _queueWorkingLevel(address account, uint8 level) private {
         uint256 idAmount = _workingIdAmount(level) * tokenUnit;
         uint256 turnover = uint256(level * 2) * idAmount;
-        uint256 upgrade = level < 8 ? _workingIdAmount(level + 1) * tokenUnit : 0;
+        uint256 upgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
         workingAutoUpgradeConsumed += upgrade;
         uint256 distributable = turnover - upgrade;
         _queueTableDistribution(account, distributable, true, level);

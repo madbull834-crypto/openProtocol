@@ -94,9 +94,17 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
       30n, 2n, 26_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
     ]);
-    expect(await protocol.workingLevelQuote(8)).to.deep.equal([
-      16n, 960_000_000n, 15_360_000_000n, 0n, 15_360_000_000n,
+    // Working Pool table (programme pp. 16–17): 15 levels, Level 8 now auto-upgrades into Level 9.
+    expect(await protocol.workingLevelQuote(1)).to.deep.equal([
+      2n, 15_000_000n, 30_000_000n, 15_000_000n, 15_000_000n,
     ]);
+    expect(await protocol.workingLevelQuote(8)).to.deep.equal([
+      16n, 960_000_000n, 15_360_000_000n, 1_920_000_000n, 13_440_000_000n,
+    ]);
+    expect(await protocol.workingLevelQuote(15)).to.deep.equal([
+      30n, 122_880_000_000n, 3_686_400_000_000n, 0n, 3_686_400_000_000n,
+    ]);
+    await expect(protocol.workingLevelQuote(16)).to.be.revertedWithCustomError(protocol, "InvalidLevel");
     expect(await protocol.nonWorkingLevelQuote(15)).to.deep.equal([
       30n, 40_960_000_000n, 1_228_800_000_000n, 0n, 1_228_800_000_000n,
     ]);
@@ -188,6 +196,20 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.claimable(genesis.address)).to.equal(12_000_000n + earned);
     expect(await token.balanceOf(await protocol.getAddress())).to.be.greaterThan(0n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("counts the team at each sponsor level and keeps the total in step", async function () {
+    const { genesis, alice, bob, carol, dave, protocol } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(alice.address);
+    await protocol.connect(carol).register(alice.address);
+    await protocol.connect(dave).register(bob.address);
+    const counts = await protocol.getLevelTeamCounts(genesis.address);
+    expect(counts.slice(0, 4)).to.deep.equal([1n, 2n, 1n, 0n]);
+    expect(await protocol.teamCount(genesis.address)).to.equal(4);
+    expect((await protocol.getLevelTeamCounts(alice.address)).slice(0, 2)).to.deep.equal([2n, 1n]);
+    await protocol.syncLevelTeam(1, 100); // already recorded at registration: no double counting
+    expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 3)).to.deep.equal([1n, 2n, 1n]);
   });
 
   it("lets anyone enrol existing members into their clubs after an upgrade", async function () {

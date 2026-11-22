@@ -77,7 +77,7 @@ Levels 1–15 use team sizes 2, 4, …, 30 and ID amounts $5, $5, $10, $20, $40,
 
 ### Working pool (p. 16)
 
-Levels 1–8 show team sizes 2–16, ID amounts $15, $15, $30, $60, $120, $240, $480, $960, and turnover $30 through $15,360. After auto-upgrade, each row is presented as 80% income, 10% U1, and 10% U2–U9. The PDF omits later levels and distribution mechanics.
+Levels 1–15 (pp. 16–17) show team sizes 2–30, ID amounts $15, $15, $30, $60 … $122,880, and turnover $30 through $3,686,400. Level 15 has no auto-upgrade. After auto-upgrade, each row is presented as 80% income, 10% U1, and 10% U2–U9. The PDF omits later levels and distribution mechanics.
 
 ### Other income and ranks
 
