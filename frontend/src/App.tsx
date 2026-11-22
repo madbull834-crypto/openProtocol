@@ -623,6 +623,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const pendingClub = rewards.data?.[29]?.result as bigint | undefined;
   const clubMembers = [30, 31, 32, 33, 34].map(i => rewards.data?.[i]?.result as bigint | undefined);
   const levelTeam = rewards.data?.[35]?.result as readonly bigint[] | undefined;
+  // Non-Working levels count only after entering at Single-Leg Level 1 (ignores levels stored under the old rule).
+  const nonWorkingShown = nonWorkingEntryCredit ? nonWorking ?? 0 : 0;
   const heldRoyalty = rewards.data?.[36]?.result as bigint | undefined;
   const royaltyClaimable = rewards.data?.[37]?.result as boolean | undefined;
   const pendingRoyalty = pendingFiveStar === undefined && pendingClub === undefined ? undefined : (pendingFiveStar ?? 0n) + (pendingClub ?? 0n) + (heldRoyalty ?? 0n);
@@ -688,7 +690,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const poolInfo = {
     single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
     working: { name: "Working", note: "Direct distribution", tone: "green", Icon: Layers, level: 0, max: 1 },
-    nonWorking: { name: "Non-Working", note: "A new level every 2 team members", tone: "purple", Icon: Network, level: nonWorking ?? 0, max: 15 },
+    nonWorking: { name: "Non-Working", note: "A new level every 2 members who reach Single-Leg Level 1", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
   } as const;
   const visiblePools = teamIncome.pools.filter(pool => pool.key !== "working");
   const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 5);
@@ -966,10 +968,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "network" && <div className="tile matrix dashboard-network db-network">
         <div className="db-seg" role="tablist" aria-label="Network system">
-          {([["working", "Working Matrix", `${directCount}/2 activation`], ["nonworking", "Non-Working", `Level ${nonWorking ?? 0}/15`], ["single", "Single Leg", `Level ${singleLeg ?? 0}/10`], ["reentry", "Re-entry", `${singleLegReentries?.toString() ?? "0"} re-entr${singleLegReentries === 1n ? "y" : "ies"}`]] as const).map(([key, label, meta]) => <button key={key} className={networkView === key ? "active" : ""} onClick={() => setNetworkView(key)}><b>{label}</b><span>{meta}</span></button>)}
+          {([["working", "Working Matrix", `${directCount}/2 activation`], ["nonworking", "Non-Working", nonWorkingEntryCredit ? `Level ${nonWorkingShown}/15` : "Not entered yet"], ["single", "Single Leg", `Level ${singleLeg ?? 0}/10`], ["reentry", "Re-entry", `${singleLegReentries?.toString() ?? "0"} re-entr${singleLegReentries === 1n ? "y" : "ies"}`]] as const).map(([key, label, meta]) => <button key={key} className={networkView === key ? "active" : ""} onClick={() => setNetworkView(key)}><b>{label}</b><span>{meta}</span></button>)}
         </div>
         {networkView === "working" && <><WorkingMatrixView address={address} team={team} workingLevel={working}/><WorkingDistributionPanel directs={directCount} heldForUpgrade={heldForUpgrade} rules={rules}/></>}
-        {networkView === "nonworking" && <NonWorkingTree address={address} team={team} currentLevel={nonWorking}/>}
+        {networkView === "nonworking" && <NonWorkingTree address={address} currentLevel={nonWorking} entered={Boolean(nonWorkingEntryCredit)}/>}
         {networkView === "single" && <SingleLegTree address={address} team={team} directs={participant?.directCount} currentLevel={singleLeg} levelTwoTeam={qualifiedLevel2}/>}
         {networkView === "reentry" && <ReentryView address={address} levelTwoTeam={qualifiedLevel2} directs={directCount} singleLeg={singleLeg} entries={singleLegEntries} reentries={singleLegReentries}/>}
       </div>}
@@ -1107,9 +1109,18 @@ function WorkingMatrixView({ address, team, workingLevel }: { address?: Address;
   return <PoolMatrixPanel kind="working" address={address} team={team} currentLevel={workingLevel} maxLevel={15} quotes={working}/>;
 }
 
-function NonWorkingTree({ address, team, currentLevel }: { address?: Address; team?: bigint; currentLevel?: number }) {
+/** Non-Working: positions fill only with team members who entered by reaching Single-Leg Level 1. */
+function NonWorkingTree({ address, currentLevel, entered }: { address?: Address; currentLevel?: number; entered: boolean }) {
   const values = useLevelQuotes("nonworking");
-  return <PoolMatrixPanel kind="nonworking" address={address} team={team} currentLevel={currentLevel} maxLevel={15} quotes={values}/>;
+  const count = useReadContract({
+    address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingTeamCount",
+    args: address ? [address] : undefined, query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
+  });
+  return <>
+    {address && !entered && <div className="db-alert"><span><Lock size={18}/></span><div><b>You enter the Non-Working matrix at Single-Leg Level 1</b><p>Team members who reach Single-Leg Level 1 already fill your positions below. Your Non-Working income starts — and catches up on every level already filled — once you reach Single-Leg Level 1 yourself.</p></div></div>}
+    {/* Levels count only once the member has entered; a level stored under the old whole-team rule is ignored until then. */}
+    <PoolMatrixPanel kind="nonworking" address={address} team={count.data as bigint | undefined} currentLevel={entered ? currentLevel : 0} maxLevel={15} quotes={values}/>
+  </>;
 }
 
 /** Contract `_queueTableDistribution`: 80% to the achiever, 10% to U1 and 10% across U2–U9. */
@@ -1128,8 +1139,17 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
   const teamQuery = useOnchainTeam(address);
+  // Non-Working positions hold only team members who entered (reached Single-Leg Level 1).
+  const entryReads = useReadContracts({
+    allowFailure: true,
+    contracts: kind === "nonworking" && protocolAddress ? (teamQuery.data ?? []).map(member => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingEntryCredit" as const, args: [member.address] as const })) : [],
+    query: { enabled: kind === "nonworking" && Boolean(teamQuery.data?.length), refetchInterval: 30_000 },
+  });
+  const eligibleTeam = kind === "nonworking"
+    ? (teamQuery.data ?? []).filter((_, index) => ((entryReads.data?.[index]?.result as bigint | undefined) ?? 0n) > 0n)
+    : teamQuery.data ?? [];
   // Team positions are filled in the order members joined your ten-level team.
-  const teamInOrder = [...(teamQuery.data ?? [])].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
+  const teamInOrder = [...eligibleTeam].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
   const quote = quotes[selectedLevel - 1];
   const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
   // Working Level 1 holds every direct referral (unlimited); 2 of them are the advancement milestone.

@@ -139,9 +139,13 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     mapping(address => uint256) public heldRoyalty;
     uint256 public heldRoyaltyLiability;
 
+    // ---- Appended in the Non-Working entry upgrade (uses 1 gap slot). ----
+    /// @notice Team members (10 levels deep) who entered the Non-Working matrix by reaching Single-Leg Level 1.
+    mapping(address => uint64) public nonWorkingTeamCount;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[35] private __gap;
+    uint256[34] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -309,6 +313,17 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
     /// @notice Re-checks `account`'s Single-Leg levels. Levels are otherwise re-checked only when
     /// someone joins within the account's 10-level team. Permissionless; pays only what the rules allow.
+    /// @notice One-off cleanup after the Non-Working entry rule: clears levels and queued Non-Working
+    /// income that accounts got under the old whole-team rule without having entered. Entered accounts are skipped.
+    function resetLegacyNonWorking(address[] calldata accounts) external onlyOwner {
+        for (uint256 i; i < accounts.length; ++i) {
+            address account = accounts[i];
+            if (nonWorkingEntryCredit[account] != 0 || nonWorkingLevel[account] == 0) continue;
+            nonWorkingLevel[account] = 0;
+            pendingNonWorkingPoolIncome[account] = 0;
+            emit LevelAdvanced(account, workingLevel[account], 0);
+        }
+    }
     /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
     function syncRank(address account) external nonReentrant {
         if (participants[account].id == 0) revert SponsorNotRegistered(account);
@@ -446,20 +461,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         for (uint8 depth; depth < MAX_UPLINE && account != address(0); ++depth) {
             uint64 newTeam = ++teamCount[account];
             uint8 oldWorking = workingLevel[account];
-            uint8 oldNonWorking = nonWorkingLevel[account];
             uint8 newWorking = uint8(newTeam / 2 > MAX_WORKING_LEVEL ? MAX_WORKING_LEVEL : newTeam / 2);
-            uint8 newNonWorking = uint8(newTeam / 2 > 15 ? 15 : newTeam / 2);
-            if (newWorking != oldWorking || newNonWorking != oldNonWorking) {
+            if (newWorking != oldWorking) {
                 // Working Pool table: 80% to the achiever, 10% to U1, 10% across U2–U9, paid from the Working reserve.
                 for (uint8 level = oldWorking + 1; level <= newWorking; ++level) {
                     _queueWorkingLevel(account, level);
                 }
-                for (uint8 level = oldNonWorking + 1; level <= newNonWorking; ++level) {
-                    _queueNonWorkingLevel(account, level);
-                }
                 workingLevel[account] = newWorking;
-                nonWorkingLevel[account] = newNonWorking;
-                emit LevelAdvanced(account, newWorking, newNonWorking);
+                emit LevelAdvanced(account, newWorking, nonWorkingLevel[account]);
             }
             if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
@@ -605,6 +614,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
                 pendingNonWorkingRedirect += redirect;
                 nonWorkingEntryCredit[account] += redirect;
                 emit NonWorkingEntryFunded(account, redirect);
+                _enterNonWorking(account);
             } else if (level == 3) {
                 uint256 reentry = _singleLegExtra(level) * tokenUnit;
                 singleLegReentries[account]++;
@@ -622,6 +632,30 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             emit PoolIncomeQueued(account, 1, level, ownAmount + 2 * uplineAmount);
             unchecked { ++level; }
         }
+    }
+
+    /// @dev Reaching Single-Leg Level 1 enters the Non-Working matrix: the member fills a position for
+    /// each of their 10 uplines, and their own Non-Working levels (already filled by others) catch up.
+    function _enterNonWorking(address member) private {
+        _advanceNonWorking(member);
+        address upline = participants[member].sponsor;
+        for (uint8 depth; depth < MAX_UPLINE && upline != address(0); ++depth) {
+            nonWorkingTeamCount[upline]++;
+            _advanceNonWorking(upline);
+            upline = participants[upline].sponsor;
+        }
+    }
+
+    /// @dev Non-Working level = entered team / 2 (max 15); income is queued only once the member has entered.
+    function _advanceNonWorking(address account) private {
+        if (nonWorkingEntryCredit[account] == 0) return;
+        uint64 entered = nonWorkingTeamCount[account];
+        uint8 newLevel = uint8(entered / 2 > 15 ? 15 : entered / 2);
+        uint8 oldLevel = nonWorkingLevel[account];
+        if (newLevel <= oldLevel) return;
+        for (uint8 level = oldLevel + 1; level <= newLevel; ++level) _queueNonWorkingLevel(account, level);
+        nonWorkingLevel[account] = newLevel;
+        emit LevelAdvanced(account, workingLevel[account], newLevel);
     }
 
     function _recordQualifiedLevel(address account, uint8 level) private {

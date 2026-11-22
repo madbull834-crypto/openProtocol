@@ -81,7 +81,8 @@ describe("OpenProtocolParticipation", function () {
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(2);
+    // Non-Working fills only with members who reached Single-Leg Level 1; nobody has yet.
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
     expect(await protocol.starRank(genesis.address)).to.equal(2);
     expect(await protocol.starRank(alice.address)).to.equal(1);
   });
@@ -344,6 +345,29 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.teamCount(genesis.address)).to.equal(30);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
     expect(await protocol.singleLegTeamFor(genesis.address, 3)).to.equal(0);
+  });
+
+  it("fills the Non-Working matrix only with members who reached Single-Leg Level 1", async function () {
+    const { genesis, protocol, token } = await fixture();
+    await addMembers(protocol, token, genesis.address, 9);
+    // 9 team members, none in Single-Leg Level 1: no Non-Working positions.
+    expect(await protocol.nonWorkingTeamCount(genesis.address)).to.equal(0);
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
+
+    await addLevelTwoChain(protocol, token, genesis.address);
+    // All 10 chain members reached Single-Leg Level 1 and entered: 10 positions -> Level 5.
+    expect(await protocol.nonWorkingTeamCount(genesis.address)).to.equal(10);
+    expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(5);
+    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.be.greaterThan(0n);
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("lets only the owner clear Non-Working state left by the old rule, skipping entered members", async function () {
+    const { genesis, alice, protocol } = await fixture();
+    await expect(protocol.connect(alice).resetLegacyNonWorking([genesis.address])).to.be.reverted;
+    await protocol.connect(genesis).resetLegacyNonWorking([genesis.address, alice.address]); // nothing to clear: no-op
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
   });
 
   it("uses 9 USDT for a second Single-Leg entry at level three", async function () {

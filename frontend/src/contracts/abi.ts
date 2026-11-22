@@ -16,6 +16,7 @@ export const protocolAbi = [
   { type: "function", name: "clubClaimDirects", stateMutability: "pure", inputs: [{ name: "rank", type: "uint8" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "heldRoyalty", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "royaltyClaimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "nonWorkingTeamCount", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "singleLegTeamFor", stateMutability: "view", inputs: [{ name: "account", type: "address" }, { name: "level", type: "uint8" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "syncSingleLeg", stateMutability: "nonpayable", inputs: [{ name: "account", type: "address" }], outputs: [] },
   { type: "function", name: "getDirectReferrals", stateMutability: "view", inputs: [{ name: "account", type: "address" }, { name: "offset", type: "uint256" }, { name: "limit", type: "uint256" }], outputs: [{ type: "address[]" }] },
