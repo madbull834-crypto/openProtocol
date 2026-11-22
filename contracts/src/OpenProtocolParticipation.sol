@@ -370,6 +370,10 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             uint8 newWorking = uint8(newTeam / 2 > MAX_WORKING_LEVEL ? MAX_WORKING_LEVEL : newTeam / 2);
             uint8 newNonWorking = uint8(newTeam / 2 > 15 ? 15 : newTeam / 2);
             if (newWorking != oldWorking || newNonWorking != oldNonWorking) {
+                // Working Pool table: 80% to the achiever, 10% to U1, 10% across U2–U9, paid from the Working reserve.
+                for (uint8 level = oldWorking + 1; level <= newWorking; ++level) {
+                    _queueWorkingLevel(account, level);
+                }
                 for (uint8 level = oldNonWorking + 1; level <= newNonWorking; ++level) {
                     _queueNonWorkingLevel(account, level);
                 }

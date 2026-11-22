@@ -126,6 +126,25 @@ describe("OpenProtocolParticipation", function () {
     expect(quote3.directs).to.equal(2);
   });
 
+  it("queues Working Pool level income and pays it from the Working reserve", async function () {
+    const { genesis, alice, bob, carol, dave, protocol } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(genesis.address);
+    // Level 1: turnover 30, auto-upgrade 15, distributable 15 -> achiever 80% = 12 USDT.
+    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n);
+    await protocol.connect(carol).register(genesis.address);
+    await protocol.connect(dave).register(genesis.address);
+    // Level 2: turnover 60, auto-upgrade 30, distributable 30 -> 24 USDT more.
+    expect(await protocol.workingLevel(genesis.address)).to.equal(2);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(36_000_000n);
+    await expect(protocol.connect(genesis).settlePoolRewards())
+      .to.emit(protocol, "RewardCredited")
+      .withArgs(genesis.address, 36_000_000n, ethers.keccak256(ethers.toUtf8Bytes("WORKING_LEVEL_INCOME")));
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
   it("funds Single-Leg from 9 USDT and redirects 5 USDT at level two", async function () {
     const { genesis, protocol, token } = await fixture();
     await addMembers(protocol, token, genesis.address, 15);
