@@ -598,7 +598,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const fiveStarWeight = rewards.data?.[19]?.result as bigint | undefined;
   const weeklyDirects = rewards.data?.[20]?.result as bigint | undefined;
   const weeklyCompetition = rewards.data?.[21]?.result as readonly [Address, bigint, boolean] | undefined;
-  const isWeeklyLeader = Boolean(weeklyCompetition && weeklyCompetition[0] !== zeroAddress && weeklyCompetition[0].toLowerCase() === address.toLowerCase() && weeklyCompetition[1] >= 5n);
+  const isWeeklyLeader = Boolean(weeklyCompetition && weeklyCompetition[0] !== zeroAddress && weeklyCompetition[0].toLowerCase() === address?.toLowerCase() && weeklyCompetition[1] >= 5n);
   const singleLegEntries = rewards.data?.[22]?.result as bigint | undefined;
   const singleLegReentries = rewards.data?.[23]?.result as bigint | undefined;
   const nonWorkingEntryCredit = rewards.data?.[24]?.result as bigint | undefined;
@@ -832,7 +832,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             <div className="db-section-head"><div><small>WEEKLY SUPERSTAR</small><h3>Current recruiting week</h3></div><span className="db-tag">Week {currentWeek.toString()}</span></div>
             <div className="weekly-score"><div><small>Your directs</small><b>{weeklyDirects?.toString() ?? "—"}</b></div><div><small>Leading score</small><b>{weeklyCompetition?.[1]?.toString() ?? "—"}</b></div></div>
             <ul className="db-rows">
-              <li><span>Current leader</span><b className="mono">{!weeklyCompetition || weeklyCompetition[0] === zeroAddress ? "No leader yet" : weeklyCompetition[0].toLowerCase() === address.toLowerCase() ? "You" : shortAddress(weeklyCompetition[0])}</b></li>
+              <li><span>Current leader</span><b className="mono">{!weeklyCompetition || weeklyCompetition[0] === zeroAddress ? "No leader yet" : weeklyCompetition[0].toLowerCase() === address?.toLowerCase() ? "You" : shortAddress(weeklyCompetition[0])}</b></li>
               <li><span>Accumulated $1 fund</span><b>{formatToken(superstarReserve)} USDT</b></li>
               <li><span>Minimum qualification</span><b>5 directs</b></li>
               <li><span>Week ends</span><b>{weekEnds}</b></li>
