@@ -54,6 +54,38 @@ export function useOnchainTeam(address?: Address, maxDepth = MAX_TEAM_DEPTH) {
   });
 }
 
+export type LinePosition = { position: number; address: Address; memberId: string; reentry: boolean };
+
+/**
+ * The global Single-Leg line (first come, first served): your positions and the next `limit`
+ * positions after your first one, read from `singleLegInfo` and `lineOwnerAt`.
+ */
+export function useSingleLegLine(address?: Address, limit = 50) {
+  const client = usePublicClient({ chainId });
+  return useQuery({
+    queryKey: ["single-leg-line", address?.toLowerCase(), limit],
+    enabled: Boolean(address && client && protocolAddress),
+    refetchInterval: 15_000,
+    queryFn: async () => {
+      if (!address || !client || !protocolAddress) return undefined;
+      const [primary, primaryLevel, reentry, reentryLevel, line] = await client.readContract({ address: protocolAddress, abi: protocolAbi, functionName: "singleLegInfo", args: [address] }) as readonly [bigint, number, bigint, number, bigint];
+      const first = Number(primary) + 1;
+      const last = Math.min(Number(line), Number(primary) + limit);
+      const positions = Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => first + index);
+      const owners = positions.length ? await client.multicall({ allowFailure: false, contracts: positions.map(position => ({ address: protocolAddress!, abi: protocolAbi, functionName: "lineOwnerAt" as const, args: [BigInt(position)] as const })) }) as Address[] : [];
+      const details = owners.length ? await client.multicall({ allowFailure: false, contracts: owners.map(owner => ({ address: protocolAddress!, abi: protocolAbi, functionName: "getParticipant" as const, args: [owner] as const })) }) as { id: bigint }[] : [];
+      const reentries = owners.length ? await client.multicall({ allowFailure: false, contracts: owners.map(owner => ({ address: protocolAddress!, abi: protocolAbi, functionName: "reentryPosition" as const, args: [owner] as const })) }) as bigint[] : [];
+      const after: LinePosition[] = positions.map((position, index) => ({
+        position, address: owners[index], memberId: details[index].id.toString(), reentry: reentries[index] === BigInt(position),
+      }));
+      return {
+        primary: Number(primary), primaryLevel: Number(primaryLevel), reentry: Number(reentry), reentryLevel: Number(reentryLevel),
+        line: Number(line), team: Number(line) - Number(primary), reentryTeam: reentry ? Number(line) - Number(reentry) : 0, after,
+      };
+    },
+  });
+}
+
 /** Direct referrals from the contract, in join order. */
 export function useOnchainDirects(address?: Address) {
   const team = useOnchainTeam(address);

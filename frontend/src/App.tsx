@@ -9,7 +9,7 @@ import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
 import { incomeName, incomeStreams, useIncomeHistory } from "./income";
-import { useOnchainDirects, useOnchainIncome, useOnchainTeam, useProtocolRules, type ProtocolRules, type RankRule } from "./onchain";
+import { useOnchainDirects, useOnchainIncome, useOnchainTeam, useProtocolRules, useSingleLegLine, type ProtocolRules, type RankRule } from "./onchain";
 import { Landing } from "./Landing";
 import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
 
@@ -607,6 +607,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const indexedHistory = useIncomeHistory(isMember(participant) ? address : undefined);
   const history = useOnchainIncome(isMember(participant) ? address : undefined, rules, indexedHistory.data?.recent);
   const directReferrals = useOnchainDirects(isMember(participant) ? address : undefined);
+  // Single-Leg is one global line: your team is everyone who joined after your position.
+  const singleLegLine = useSingleLegLine(isMember(participant) ? address : undefined);
+  const slTeam = singleLegLine.data?.team;
   const nonWorkingReentries = rewards.data?.[18]?.result as bigint | undefined;
   const fiveStarWeight = rewards.data?.[19]?.result as bigint | undefined;
   const weeklyDirects = rewards.data?.[20]?.result as bigint | undefined;
@@ -833,16 +836,15 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           const [nextMembers, nextDirects] = SINGLE_LEG_TABLE[Math.min(level, 9)];
           const prevMembers = level === 0 ? 0 : SINGLE_LEG_TABLE[level - 1][0];
           // Level 3 counts only team members who crossed Single-Leg Level 2 (contract `singleLegTeamFor`).
-          const levelThreeNext = level === 2;
-          const counted = levelThreeNext ? Number(qualifiedLevel2 ?? 0n) : teamCount;
-          const progress = done ? 100 : levelThreeNext ? Math.min(100, counted / nextMembers * 100) : Math.min(100, Math.max(0, (teamCount - prevMembers) / (nextMembers - prevMembers) * 100));
+          const counted = slTeam ?? 0;
+          const progress = done ? 100 : Math.min(100, Math.max(0, (counted - prevMembers) / (nextMembers - prevMembers) * 100));
           return <div className="db-card single-leg-card">
             <div className="db-section-head"><div><small>SINGLE-LEG POOL</small><h3>Single-Leg team</h3></div><button className="db-text-btn" onClick={() => setTab("network")}>View <ChevronRight size={14}/></button></div>
             <div className="single-leg-body">
-              <div className="team-total sl"><span className="db-icon"><TrendingUp size={18}/></span><small>Single-Leg team</small><b>{team === undefined ? "—" : teamCount.toLocaleString()}</b><em>Counted across your 10-level team</em></div>
+              <div className="team-total sl"><span className="db-icon"><TrendingUp size={18}/></span><small>Single-Leg team</small><b>{slTeam === undefined ? "—" : slTeam.toLocaleString()}</b><em>Everyone who joined after you · position #{singleLegLine.data?.primary ?? "—"}</em></div>
               <div className="single-leg-stats">
                 <div><small>Current level</small><b>{level} <i>/ 10</i></b></div>
-                <div><small>Next level needs</small><b>{done ? "—" : levelThreeNext ? `${nextMembers} past Level 2` : `${nextMembers.toLocaleString()} team`}</b><span>{done ? "All levels complete" : `${Math.max(0, nextMembers - counted).toLocaleString()} more ${levelThreeNext ? "must cross Level 2" : "members"}`}</span></div>
+                <div><small>Next level needs</small><b>{done ? "—" : `${nextMembers.toLocaleString()} team`}</b><span>{done ? "All levels complete" : `${Math.max(0, nextMembers - counted).toLocaleString()} more members`}</span></div>
                 <div><small>Directs required</small><b>{done ? "—" : nextDirects}</b><span>{done ? "" : directCount >= nextDirects ? "Requirement met" : `You have ${directCount}`}</span></div>
               </div>
             </div>
@@ -972,8 +974,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         </div>
         {networkView === "working" && <><WorkingMatrixView address={address} team={team} workingLevel={working}/><WorkingDistributionPanel directs={directCount} heldForUpgrade={heldForUpgrade} rules={rules}/></>}
         {networkView === "nonworking" && <NonWorkingTree address={address} currentLevel={nonWorking} entered={Boolean(nonWorkingEntryCredit)}/>}
-        {networkView === "single" && <SingleLegTree address={address} team={team} directs={participant?.directCount} currentLevel={singleLeg} levelTwoTeam={qualifiedLevel2}/>}
-        {networkView === "reentry" && <ReentryView address={address} levelTwoTeam={qualifiedLevel2} directs={directCount} singleLeg={singleLeg} entries={singleLegEntries} reentries={singleLegReentries}/>}
+        {networkView === "single" && <SingleLegTree address={address} directs={participant?.directCount} currentLevel={singleLeg} line={singleLegLine.data} lineLoading={singleLegLine.isLoading} lineError={singleLegLine.isError}/>}
+        {networkView === "reentry" && <ReentryView address={address} slTeam={slTeam} line={singleLegLine.data} directs={directCount} singleLeg={singleLeg} entries={singleLegEntries} reentries={singleLegReentries}/>}
       </div>}
 
       {tab === "royalty" && <div className="db-stack">
@@ -1249,8 +1251,8 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
 }
 
 /** Single-Leg re-entry: the one-time $9 re-entry at Single-Leg Level 3, for you and for each member of your team. */
-function ReentryView({ address, levelTwoTeam, directs, singleLeg, entries, reentries }: {
-  address?: Address; levelTwoTeam?: bigint; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
+function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reentries }: {
+  address?: Address; slTeam?: number; line?: { reentry: number; reentryLevel: number; reentryTeam: number }; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
 }) {
   const teamQuery = useOnchainTeam(address);
   const members = teamQuery.data ?? [];
@@ -1269,7 +1271,7 @@ function ReentryView({ address, levelTwoTeam, directs, singleLeg, entries, reent
   const needTeam = Number(quote?.[0] ?? 30n);
   const needDirects = Number(quote?.[1] ?? 1n);
   const amount = quote?.[3] ?? 9_000_000n;
-  const teamValue = Number(levelTwoTeam ?? 0n);
+  const teamValue = slTeam ?? 0;
   const mine = Number(reentries ?? 0n);
   const reentered = members
     .map((member, index) => ({ ...member, reentries: Number((reads.data?.[1 + index * 2]?.result as bigint | undefined) ?? 0n), level: Number(reads.data?.[2 + index * 2]?.result ?? 0) }))
@@ -1277,20 +1279,20 @@ function ReentryView({ address, levelTwoTeam, directs, singleLeg, entries, reent
   const teamProgress = Math.min(100, teamValue / needTeam * 100);
 
   return <div className="progression-view reentry-view">
-    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {formatToken(amount)} USDT re-entry</h4></div><p>When a member reaches Single-Leg Level 3 ({needTeam} team members who have crossed Level 2, plus {needDirects} direct), the contract records a one-time re-entry funded with {formatToken(amount)} USDT from the Single-Leg pool.</p></div>
+    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {formatToken(amount)} USDT re-entry</h4></div><p>When a member reaches Single-Leg Level 3 ({needTeam} people joined after them in the line, plus {needDirects} direct), they get a new position at the end of the line that climbs the levels and pays again. The contract records a one-time re-entry funded with {formatToken(amount)} USDT from the Single-Leg pool.</p></div>
     <div className="db-summary">
       <div className="primary"><span className="db-sum-icon"><Zap size={16}/></span><small>Your re-entries</small><b>{reentries === undefined ? "—" : mine}</b><span>{mine > 0 ? "Re-entry completed at Single-Leg Level 3" : `Unlocks at Single-Leg Level 3 · you are at Level ${singleLeg ?? 0}`}</span></div>
-      <div><span className="db-sum-icon"><Layers size={16}/></span><small>Your Single-Leg entries</small><b>{entries?.toString() ?? "—"}</b><span>Original entry{mine > 0 ? " + re-entry" : ""}</span></div>
+      <div><span className="db-sum-icon"><Layers size={16}/></span><small>Your re-entry position</small><b>{line?.reentry ? `#${line.reentry}` : "—"}</b><span>{line?.reentry ? `Level ${line.reentryLevel} / 10 · ${line.reentryTeam.toLocaleString()} joined after it` : `${entries?.toString() ?? "1"} entry so far`}</span></div>
       <div><span className="db-sum-icon"><Users size={16}/></span><small>Team members re-entered</small><b>{teamQuery.isLoading ? "—" : reentered.length.toLocaleString()}</b><span>Across your 10-level team</span></div>
     </div>
 
     {mine === 0 && <div className="db-card reentry-progress">
       <div className="db-section-head"><div><small>YOUR PROGRESS</small><h3>Road to your re-entry</h3></div><span className="db-tag">Level {singleLeg ?? 0} / 3</span></div>
       <div className="club-reqs">
-        <div><div><span>Members past Level 2</span><b>{Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
+        <div><div><span>Joined after you</span><b>{Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
         <div><div><span>Direct referrals</span><b>{Math.min(directs, needDirects)} / {needDirects}</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directs / Math.max(1, needDirects) * 100)}%` }}/></div></div>
       </div>
-      <p className="db-foot-note">{teamValue >= needTeam && directs >= needDirects ? "Requirements met — your re-entry is recorded with the next team registration." : `${Math.max(0, needTeam - teamValue).toLocaleString()} more team members need to cross Single-Leg Level 2.`}</p>
+      <p className="db-foot-note">{teamValue >= needTeam && directs >= needDirects ? "Requirements met — your re-entry is recorded with the next team registration." : `${Math.max(0, needTeam - teamValue).toLocaleString()} more people need to join after you.`}</p>
     </div>}
 
     <div className="db-card">
@@ -1310,13 +1312,13 @@ function ReentryView({ address, levelTwoTeam, directs, singleLeg, entries, reent
 
 /** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
 const SINGLE_LEG_TABLE = [
-  [10, 1, 11, 5, 1], [15, 1, 15, 0, 2], [30, 1, 35, 9, 3], [60, 2, 50, 0, 5], [250, 3, 150, 0, 10],
-  [600, 3, 500, 0, 30], [1_000, 3, 1_500, 0, 100], [1_500, 3, 3_500, 0, 400], [2_500, 4, 10_000, 0, 1_000], [3_700, 4, 15_000, 0, 2_500],
+  [10, 1, 11, 5, 1], [15, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
+  [600, 11, 500, 0, 30], [1_000, 14, 1_500, 0, 100], [1_500, 17, 3_500, 0, 400], [2_500, 21, 10_000, 0, 1_000], [3_700, 25, 15_000, 0, 2_500],
 ] as const;
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-function SingleLegTree({ address, team, directs, currentLevel, levelTwoTeam }: { address?: Address; team?: bigint; directs?: bigint; currentLevel?: number; levelTwoTeam?: bigint }) {
-  const indexedTeam = useOnchainTeam(address);
+type SingleLegLineData = NonNullable<ReturnType<typeof useSingleLegLine>["data"]>;
+function SingleLegTree({ address, directs, currentLevel, line, lineLoading, lineError }: { address?: Address; directs?: bigint; currentLevel?: number; line?: SingleLegLineData; lineLoading: boolean; lineError: boolean }) {
   const quotes = useReadContracts({
     allowFailure: true,
     contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
@@ -1329,14 +1331,12 @@ function SingleLegTree({ address, team, directs, currentLevel, levelTwoTeam }: {
       ? { level: index + 1, members: Number(quote[0]), directs: Number(quote[1]), income: toUsdt(quote[2]), extra: toUsdt(quote[3]), upline: toUsdt(quote[4]) }
       : { level: index + 1, members, directs: directNeed, income, extra, upline };
   });
-  const teamValue = Number(team ?? 0n);
+  const teamValue = line?.team ?? 0;
   const directValue = Number(directs ?? 0n);
   const done = currentLevel ?? 0;
   const next = levels[done];
-  // Contract `singleLegTeamFor`: Level 3 counts only team members who already crossed Single-Leg Level 2.
-  const levelThreeNext = next?.level === 3;
-  const countedTeam = levelThreeNext ? Number(levelTwoTeam ?? 0n) : teamValue;
-  const teamLabel = levelThreeNext ? "Members past Level 2" : "Team size";
+  const countedTeam = teamValue;
+  const teamLabel = "Joined after you";
   const netReward = (level: typeof levels[number]) => level.income;
   const allocationNote = (level: typeof levels[number]) => level.extra === 0 ? undefined : level.level === 1 ? `${usdt(level.extra)} USDT → Global pool` : `${usdt(level.extra)} USDT → 1-time re-entry`;
   const earned = levels.slice(0, done).reduce((sum, level) => sum + netReward(level), 0);
@@ -1344,9 +1344,7 @@ function SingleLegTree({ address, team, directs, currentLevel, levelTwoTeam }: {
   const teamLeft = next ? Math.max(0, next.members - countedTeam) : 0;
   const directsLeft = next ? Math.max(0, next.directs - directValue) : 0;
   const todo = [
-    teamLeft > 0 && (levelThreeNext
-      ? `have ${teamLeft.toLocaleString()} more team ${teamLeft === 1 ? "member" : "members"} cross Single-Leg Level 2`
-      : `grow your team by ${teamLeft.toLocaleString()} ${teamLeft === 1 ? "member" : "members"}`),
+    teamLeft > 0 && `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "person" : "people"} to join the platform after you`,
     directsLeft > 0 && `personally invite ${directsLeft} more ${directsLeft === 1 ? "person" : "people"}`,
   ].filter(Boolean) as string[];
   const bar = (have: number, need: number) => <div className="sl-bar"><i style={{ width: `${need ? Math.min(100, have / need * 100) : 100}%` }}/></div>;
@@ -1379,18 +1377,18 @@ function SingleLegTree({ address, team, directs, currentLevel, levelTwoTeam }: {
 
     <div className="sl-team">
       <div className="sl-team-head">
-        <div><small>YOUR 10-LEVEL DOWNLINE</small><h4>Single-Leg team members</h4></div>
-        <span>{teamValue.toLocaleString()} on-chain</span>
+        <div><small>GLOBAL LINE · FIRST COME, FIRST SERVED</small><h4>Joined after you</h4></div>
+        <span>Your position #{line?.primary ?? "—"} · {teamValue.toLocaleString()} after you</span>
       </div>
-      {indexedTeam.isLoading && <p className="db-foot-note">Loading your indexed Single-Leg team…</p>}
-      {indexedTeam.isError && <p className="db-warn">Couldn't read your team list from the contract right now. Your on-chain team count is still {teamValue.toLocaleString()}.</p>}
-      {indexedTeam.data?.length === 0 && <p className="db-empty-note">No Single-Leg team members yet. Direct and indirect members appear here as soon as they register.</p>}
-      {indexedTeam.data && indexedTeam.data.length > 0 && <ul className="sl-team-list">{indexedTeam.data.slice(0, 50).map(member => <li key={member.address}>
-        <span className="sl-team-depth">L{member.depth}</span>
-        <span><b>Member #{member.memberId}</b><small>{member.depth === 1 ? "Direct referral" : `Indirect · sponsor ${shortAddress(member.sponsor)}`}</small></span>
-        <a className="mono" href={`${explorerUrl}/address/${member.address}`} target="_blank" rel="noreferrer">{shortAddress(member.address)} <ExternalLink size={11}/></a>
+      {lineLoading && <p className="db-foot-note">Loading the Single-Leg line…</p>}
+      {lineError && <p className="db-warn">Couldn't read the Single-Leg line from the contract right now.</p>}
+      {line && line.after.length === 0 && <p className="db-empty-note">Nobody has joined after you yet. Everyone who joins the platform after you counts, whoever referred them.</p>}
+      {line && line.after.length > 0 && <ul className="sl-team-list">{line.after.map(entry => <li key={entry.position}>
+        <span className="sl-team-depth">#{entry.position}</span>
+        <span><b>Member #{entry.memberId}</b><small>{entry.reentry ? "Re-entry position" : "Joined the platform"}</small></span>
+        <a className="mono" href={`${explorerUrl}/address/${entry.address}`} target="_blank" rel="noreferrer">{shortAddress(entry.address)} <ExternalLink size={11}/></a>
       </li>)}</ul>}
-      {indexedTeam.data && indexedTeam.data.length > 50 && <p className="db-foot-note">Showing the first 50 of {indexedTeam.data.length.toLocaleString()} team members.</p>}
+      {line && teamValue > line.after.length && <p className="db-foot-note">Showing the first {line.after.length} of {teamValue.toLocaleString()} positions after you.</p>}
     </div>
 
     <div className="sl-table" role="table" aria-label="Single-Leg levels">

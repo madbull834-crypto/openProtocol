@@ -61,7 +61,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 public clubAllocation;
 
     uint64 public memberCount;
-    uint64 public matrixCursor;
+    uint64 internal matrixCursor; // retired: Global Matrix placement (kept for storage layout)
     uint64 public fiveStarCount;
     uint256 public totalParticipated;
     uint256 public totalWorkingAllocated;
@@ -82,8 +82,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
 
     mapping(address => Participant) private participants;
     mapping(uint64 => address) public memberById;
-    mapping(uint64 => address) public matrixQueue;
-    mapping(address => address) public matrixParent;
+    mapping(uint64 => address) internal matrixQueue; // retired
+    mapping(address => address) internal matrixParent; // retired
     mapping(address => address[2]) private matrixChildren;
     mapping(address => uint64) public teamCount;
     mapping(address => uint8) public workingLevel;
@@ -143,9 +143,20 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Team members (10 levels deep) who entered the Non-Working matrix by reaching Single-Leg Level 1.
     mapping(address => uint64) public nonWorkingTeamCount;
 
+    // ---- Appended in the global Single-Leg line upgrade (uses 6 gap slots). ----
+    /// @notice Single-Leg is one global line, first come first served. Each registration and each
+    /// Level 3 re-entry adds a position; a position's team is every position after it.
+    uint64 public lineLength;
+    mapping(uint64 => address) internal lineOwner;
+    mapping(address => uint64) internal primaryPosition;
+    mapping(address => uint64) public reentryPosition;
+    mapping(address => uint8) public reentryLevel;
+    /// @dev Per Single-Leg level, the next position to check for reaching that level's team size.
+    mapping(uint8 => uint64) internal lineCursor;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[34] private __gap;
+    uint256[28] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -203,7 +214,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _syncClub(genesisParticipant_);
         singleLegEntries[genesisParticipant_] = 1;
         memberById[1] = genesisParticipant_;
-        matrixQueue[0] = genesisParticipant_;
         emit ParticipantRegistered(genesisParticipant_, address(0), 1, uint64(block.timestamp));
     }
 
@@ -216,6 +226,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _receiveExact(msg.sender, ticketPrice);
 
         bool sponsorWasActive = participants[sponsor].directCount >= 2;
+        _initLine();
         uint64 newId = ++memberCount;
         participants[msg.sender] = Participant(newId, 0, sponsor, uint64(block.timestamp));
         starRank[msg.sender] = 1;
@@ -223,12 +234,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         singleLegEntries[msg.sender] = 1;
         participants[sponsor].directCount++;
         memberById[newId] = msg.sender;
-        _placeInMatrix(msg.sender, newId);
         // Per-level counts first, so rank checks during team growth see this registration.
         _recordLevelTeam(msg.sender);
         _recordTeamGrowth(sponsor);
         _recordDirect(msg.sender);
         _recordWeeklyDirect(sponsor);
+        primaryPosition[msg.sender] = _addToLine(msg.sender);
+        _processOwner(sponsor);
+        _sweepLine();
 
         totalParticipated += ticketPrice;
         totalWorkingAllocated += workingAllocation;
@@ -306,37 +319,25 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (toId > memberCount) toId = memberCount;
         for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordLevelTeam(memberById[id]);
     }
-    /// @notice The team size checked for a Single-Leg level. Level 3 counts only team members
-    /// (10 levels deep) who have already crossed Single-Leg Level 2; other levels count the whole team.
-    function singleLegTeamFor(address account, uint8 level) public view returns (uint64) {
-        return level == 3 ? qualifiedLevelTeamCount[account][2] : teamCount[account];
-    }
-    /// @notice Re-checks `account`'s Single-Leg levels. Levels are otherwise re-checked only when
-    /// someone joins within the account's 10-level team. Permissionless; pays only what the rules allow.
-    /// @notice One-off cleanup after a level-rule change. Non-Working: clears levels and queued income an
-    /// account got under the old whole-team rule without having entered. Working (`working` = true): clears
-    /// queued Working income and re-derives the level from members at each depth, re-queuing what it earns.
-    function resetLegacyLevels(address[] calldata accounts, bool working) external onlyOwner {
-        for (uint256 i; i < accounts.length; ++i) {
-            address account = accounts[i];
-            if (working) {
-                workingLevel[account] = 0;
-                pendingWorkingPoolIncome[account] = 0;
-                _advanceWorking(account);
-            } else if (nonWorkingEntryCredit[account] == 0) {
-                nonWorkingLevel[account] = 0;
-                pendingNonWorkingPoolIncome[account] = 0;
-            }
-        }
-    }
     /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
     function syncRank(address account) external nonReentrant {
         if (participants[account].id == 0) revert SponsorNotRegistered(account);
         _updateRank(account);
     }
+    /// @notice Re-checks all of `account`'s Single-Leg positions. Permissionless.
     function syncSingleLeg(address account) external nonReentrant {
         if (participants[account].id == 0) revert SponsorNotRegistered(account);
-        _processSingleLeg(account);
+        _initLine();
+        _processOwner(account);
+        _sweepLine();
+    }
+    /// @notice An account's Single-Leg positions and levels, and the current line length.
+    function singleLegInfo(address account) external view returns (uint64 primary, uint8 primaryLevel, uint64 reentry, uint8 reentryLvl, uint64 line) {
+        return (_primaryOf(account), singleLegLevel[account], reentryPosition[account], reentryLevel[account], _lineLen());
+    }
+    function lineOwnerAt(uint64 position) public view returns (address) {
+        address owner = lineOwner[position];
+        return owner == address(0) ? memberById[position] : owner;
     }
     function settlePoolRewards() external nonReentrant {
         uint256 cap = poolRewardCap(msg.sender);
@@ -438,7 +439,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return participants[account].directCount >= clubClaimDirects(starRank[account]);
     }
     function getParticipant(address account) external view returns (Participant memory) { return participants[account]; }
-    function getMatrixChildren(address account) external view returns (address[2] memory) { return matrixChildren[account]; }
     function isRegistered(address account) external view returns (bool) { return participants[account].id != 0; }
     function isActive(address account) external view returns (bool) { return participants[account].directCount >= 2; }
     function currentWeek() public view returns (uint256) { return block.timestamp / WEEK; }
@@ -452,23 +452,12 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
                 + fiveStarLiability + clubLiability + heldRoyaltyLiability;
     }
 
-    function _placeInMatrix(address account, uint64 position) private {
-        address parent = matrixQueue[matrixCursor];
-        address[2] storage children = matrixChildren[parent];
-        if (children[0] == address(0)) children[0] = account;
-        else { children[1] = account; matrixCursor++; }
-        matrixParent[account] = parent;
-        matrixQueue[position - 1] = account;
-        emit MatrixPlaced(account, parent, position - 1);
-    }
-
     function _recordTeamGrowth(address account) private {
         for (uint8 depth; depth < MAX_UPLINE && account != address(0); ++depth) {
             uint64 newTeam = ++teamCount[account];
             if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
             _updateFiveStarWeight(account, newTeam);
-            _processSingleLeg(account);
             account = participants[account].sponsor;
         }
     }
@@ -609,26 +598,60 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit PoolIncomeQueued(account, working ? 2 : 3, level, amount);
     }
 
-    function _processSingleLeg(address account) private {
-        uint8 level = singleLegLevel[account] + 1;
+    /// @dev Before this upgrade positions equalled member ids; start the stored line from there.
+    function _initLine() private {
+        if (lineLength == 0) lineLength = memberCount;
+    }
+    function _lineLen() private view returns (uint64) {
+        return lineLength == 0 ? memberCount : lineLength;
+    }
+    function _primaryOf(address account) private view returns (uint64) {
+        uint64 position = primaryPosition[account];
+        return position == 0 ? participants[account].id : position;
+    }
+    function _addToLine(address owner) private returns (uint64 position) {
+        position = ++lineLength;
+        lineOwner[position] = owner;
+    }
+    function _processOwner(address owner) private {
+        _processPosition(_primaryOf(owner));
+        uint64 reentry = reentryPosition[owner];
+        if (reentry != 0) _processPosition(reentry);
+    }
+    /// @dev Checks every position whose team (positions after it) has just reached a level's size.
+    function _sweepLine() private {
+        for (uint8 level = 1; level <= 10; ++level) {
+            uint64 cursor = lineCursor[level];
+            if (cursor == 0) cursor = 1;
+            while (cursor + _singleLegMembers(level) <= lineLength) _processPosition(cursor++);
+            lineCursor[level] = cursor;
+        }
+    }
+
+    /// @dev Single-Leg Pool (Hybrid) table for one position. "Your income" goes to the owner; on the first
+    /// position, Level 1 also redirects $5 into the Non-Working pool and Level 3 adds a re-entry position
+    /// at the end of the line, which climbs the levels and pays again.
+    function _processPosition(uint64 position) private {
+        address account = lineOwnerAt(position);
+        if (account == address(0)) return;
+        bool primary = position == _primaryOf(account);
+        uint8 level = (primary ? singleLegLevel[account] : reentryLevel[account]) + 1;
         while (
-            level <= 10 && singleLegTeamFor(account, level) >= _singleLegMembers(level)
+            level <= 10 && lineLength - position >= _singleLegMembers(level)
                 && participants[account].directCount >= _singleLegDirects(level)
         ) {
-            // Single-Leg Pool (Hybrid) table: "Your income" goes to the member; the "Global pool +
-            // re-entry" column is $5 into the Non-Working (Global) pool at Level 1 and a $9 re-entry at Level 3.
             uint256 ownAmount = _singleLegIncome(level) * tokenUnit;
-            if (level == 1) {
+            if (primary && level == 1) {
                 uint256 redirect = _singleLegExtra(level) * tokenUnit;
                 pendingNonWorkingRedirect += redirect;
                 nonWorkingEntryCredit[account] += redirect;
                 emit NonWorkingEntryFunded(account, redirect);
                 _enterNonWorking(account);
-            } else if (level == 3) {
-                uint256 reentry = _singleLegExtra(level) * tokenUnit;
+            } else if (primary && level == 3) {
                 singleLegReentries[account]++;
                 singleLegEntries[account]++;
-                emit SingleLegReentered(account, singleLegEntries[account], reentry);
+                reentryPosition[account] = _addToLine(account);
+                emit SingleLegReentered(account, singleLegEntries[account], _singleLegExtra(level) * tokenUnit);
             }
             pendingSingleLegIncome[account] += ownAmount;
             address u1 = participants[account].sponsor;
@@ -636,8 +659,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             uint256 uplineAmount = _singleLegUpline(level) * tokenUnit;
             if (_eligibleUpline(u1)) pendingSingleLegIncome[u1] += uplineAmount;
             if (_eligibleUpline(u2)) pendingSingleLegIncome[u2] += uplineAmount;
-            singleLegLevel[account] = level;
-            if (level >= 2 && level <= 4) _recordQualifiedLevel(account, level);
+            if (primary) singleLegLevel[account] = level;
+            else reentryLevel[account] = level;
             emit PoolIncomeQueued(account, 1, level, ownAmount + 2 * uplineAmount);
             unchecked { ++level; }
         }
@@ -665,15 +688,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         for (uint8 level = oldLevel + 1; level <= newLevel; ++level) _queueNonWorkingLevel(account, level);
         nonWorkingLevel[account] = newLevel;
         emit LevelAdvanced(account, workingLevel[account], newLevel);
-    }
-
-    function _recordQualifiedLevel(address account, uint8 level) private {
-        address upline = participants[account].sponsor;
-        for (uint8 depth; depth < MAX_UPLINE && upline != address(0); ++depth) {
-            qualifiedLevelTeamCount[upline][level]++;
-            _updateRank(upline);
-            upline = participants[upline].sponsor;
-        }
     }
 
     function _fundPendingNonWorkingRedirect() private {
@@ -753,11 +767,12 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 3_700;
     }
 
+    /// @dev Total directs for a Single-Leg level: the table's per-level directs (1,1,1,2,3,3,3,3,4,4) added up.
     function _singleLegDirects(uint8 level) private pure returns (uint64) {
-        if (level <= 3) return 1;
-        if (level == 4) return 2;
-        if (level <= 8) return 3;
-        return 4;
+        if (level <= 3) return level;
+        if (level == 4) return 5;
+        if (level <= 8) return 8 + 3 * uint64(level - 5);
+        return level == 9 ? 21 : 25;
     }
 
     function _singleLegIncome(uint8 level) private pure returns (uint256) {
