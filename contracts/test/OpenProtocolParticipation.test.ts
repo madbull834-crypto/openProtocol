@@ -86,14 +86,65 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.starRank(alice.address)).to.equal(1);
   });
 
+  it("reaches 3 Star with 4 directs and 16 members at referral level 2 (4+4)", async function () {
+    const { genesis, protocol, token } = await fixture();
+    const directs = await addMembers(protocol, token, genesis.address, 4);
+    expect(await protocol.starRank(genesis.address)).to.equal(2);
+    for (const [index, direct] of directs.entries()) {
+      await addMembers(protocol, token, direct.address, 4);
+      // 3 Star only once the 16th member lands on level 2.
+      expect(await protocol.starRank(genesis.address)).to.equal(index === 3 ? 3 : 2);
+    }
+    expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 2)).to.deep.equal([4n, 16n]);
+    expect(await protocol.rankRule(4)).to.deep.equal([0n, 3n, 64n, 25_000_000n * 50n]);
+    // Each direct has 4 directs of its own, so they are 2 Star.
+    expect(await protocol.starRank(directs[0].address)).to.equal(2);
+  });
+
+  it("ranks 3 Star from level 2 alone but holds club royalty until 8 directs", async function () {
+    const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await addMembers(protocol, token, alice.address, 15);
+    // While still 1 Star, genesis earns from the 1 Star club; that stays claimable after ranking up.
+    await protocol.connect(alice).claim();
+    const oneStarShare = await protocol.pendingClubReward(genesis.address);
+    expect(oneStarShare).to.be.greaterThan(0n);
+    await addMembers(protocol, token, alice.address, 1);
+    expect(await protocol.claimable(genesis.address)).to.equal(oneStarShare);
+    expect(await protocol.heldRoyalty(genesis.address)).to.equal(0n);
+    // One direct, but all 16 level-2 members came through her: genesis is 3 Star.
+    expect(await protocol.starRank(genesis.address)).to.equal(3);
+    expect(await protocol.royaltyClaimable(genesis.address)).to.equal(false);
+
+    await protocol.connect(alice).claim(); // funds every club with 3% of alice's new withdrawal
+    const earned = await protocol.pendingClubReward(genesis.address);
+    expect(earned).to.be.greaterThan(0n);
+    expect(await protocol.withdrawable(genesis.address)).to.equal(await protocol.claimable(genesis.address));
+
+    for (const member of [bob, carol, dave]) await protocol.connect(member).register(genesis.address);
+    expect(await protocol.royaltyClaimable(genesis.address)).to.equal(false); // 4 directs: not yet 8
+    await addMembers(protocol, token, genesis.address, 4);
+    expect(await protocol.royaltyClaimable(genesis.address)).to.equal(true);
+    await expect(protocol.connect(genesis).claim())
+      .to.emit(protocol, "RewardCredited")
+      .withArgs(genesis.address, earned, ethers.keccak256(ethers.toUtf8Bytes("STAR_CLUB_ROYALTY")));
+    expect(await protocol.heldRoyalty(genesis.address)).to.equal(0n);
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
   it("exposes the exact pool tables and original ten-level percentages", async function () {
     const { protocol } = await fixture();
+    // Single-Leg Pool (Hybrid) table: Level 1 $11 + $5 global pool, Level 3 $35 + $9 re-entry.
+    expect(await protocol.singleLegQuote(1)).to.deep.equal([
+      10n, 1n, 11_000_000n, 5_000_000n, 1_000_000n, 1_000_000n,
+    ]);
     expect(await protocol.singleLegQuote(2)).to.deep.equal([
-      15n, 1n, 15_000_000n, 5_000_000n, 2_000_000n, 2_000_000n,
+      15n, 1n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
     ]);
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
-      30n, 2n, 26_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
+      30n, 1n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
     ]);
+    expect((await protocol.singleLegQuote(5)).directs).to.equal(3);
     // Working Pool table (programme pp. 16–17): 15 levels, Level 8 now auto-upgrades into Level 9.
     expect(await protocol.workingLevelQuote(1)).to.deep.equal([
       2n, 15_000_000n, 30_000_000n, 15_000_000n, 15_000_000n,
@@ -116,14 +167,15 @@ describe("OpenProtocolParticipation", function () {
     expect(bps).to.deep.equal([1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n]);
   });
 
-  it("requires two directs and prior sequential completion for single-leg level three", async function () {
+  it("uses the Single-Leg direct requirements from the published table", async function () {
     const { protocol } = await fixture();
     const quote1 = await protocol.singleLegQuote(1);
     const quote2 = await protocol.singleLegQuote(2);
     const quote3 = await protocol.singleLegQuote(3);
     expect(quote1.directs).to.equal(1);
     expect(quote2.directs).to.equal(1);
-    expect(quote3.directs).to.equal(2);
+    expect(quote3.directs).to.equal(1);
+    expect((await protocol.singleLegQuote(4)).directs).to.equal(2);
   });
 
   it("queues Working Pool level income and pays it from the Working reserve", async function () {
@@ -145,16 +197,22 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("funds Single-Leg from 9 USDT and redirects 5 USDT at level two", async function () {
+  it("funds Single-Leg from 9 USDT and redirects 5 USDT at level one", async function () {
     const { genesis, protocol, token } = await fixture();
-    await addMembers(protocol, token, genesis.address, 15);
+    await addMembers(protocol, token, genesis.address, 10);
+    // Level 1 (10 team, 1 direct): 11 USDT to the member and the 5 USDT Non-Working redirect.
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(11_000_000n);
+    expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
+    expect(await protocol.nonWorkingReserve()).to.equal(5_000_000n);
+    await addMembers(protocol, token, genesis.address, 5);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
-    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(30_000_000n);
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(26_000_000n);
     expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
     expect(await protocol.singleLegReserve()).to.equal(130_000_000n);
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(125_000_000n);
     await protocol.connect(genesis).settlePoolRewards();
-    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(30_000_000n);
+    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(26_000_000n);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -231,6 +289,38 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 3)).to.deep.equal([1n, 2n, 1n]);
   });
 
+  it("keeps an on-chain income ledger, withdrawal totals and referral lists", async function () {
+    const { genesis, alice, bob, carol, protocol } = await fixture();
+    for (const member of [alice, bob, carol]) await protocol.connect(member).register(genesis.address);
+    const direct = ethers.keccak256(ethers.toUtf8Bytes("DIRECT_INCOME"));
+    expect(await protocol.incomeByReason(genesis.address, direct)).to.equal(12_000_000n);
+    expect(await protocol.incomeCountByReason(genesis.address, direct)).to.equal(1);
+    expect(await protocol.lifetimeEarned(genesis.address)).to.equal(await protocol.claimable(genesis.address));
+    const before = await protocol.claimable(genesis.address);
+    await protocol.connect(genesis).claim();
+    expect(await protocol.totalWithdrawnGross(genesis.address)).to.equal(before);
+    expect(await protocol.withdrawCount(genesis.address)).to.equal(1);
+    expect(await protocol.lifetimeEarned(genesis.address)).to.equal(before + (await protocol.claimable(genesis.address)));
+    expect(await protocol.directReferralCount(genesis.address)).to.equal(3);
+    expect(await protocol.getDirectReferrals(genesis.address, 0, 10)).to.deep.equal([alice.address, bob.address, carol.address]);
+    expect(await protocol.getDirectReferrals(genesis.address, 1, 1)).to.deep.equal([bob.address]);
+    await protocol.syncDirectList(1, 100); // no duplicates
+    expect(await protocol.directReferralCount(genesis.address)).to.equal(3);
+  });
+
+  it("exposes the rank rules the contract itself enforces", async function () {
+    const { protocol, ticket } = await fixture();
+    expect(await protocol.rankRule(1)).to.deep.equal([0n, 0n, 0n, ticket * 2n]);
+    expect(await protocol.rankRule(3)).to.deep.equal([0n, 2n, 16n, ticket * 10n]);
+    expect(await protocol.rankRule(5)).to.deep.equal([0n, 4n, 300n, ethers.MaxUint256]);
+    const claimDirects = [];
+    for (let rank = 1; rank <= 5; rank++) claimDirects.push(await protocol.clubClaimDirects(rank));
+    expect(claimDirects).to.deep.equal([0n, 4n, 8n, 12n, 16n]);
+    await expect(protocol.rankRule(6)).to.be.revertedWithCustomError(protocol, "InvalidLevel");
+    expect(await protocol.SUPERSTAR_MIN_DIRECTS()).to.equal(5);
+    expect(await protocol.DIRECT_SHARE_BPS()).to.equal(8_000);
+  });
+
   it("lets anyone enrol existing members into their clubs after an upgrade", async function () {
     const { genesis, alice, protocol } = await fixture();
     await protocol.connect(alice).register(genesis.address);
@@ -239,11 +329,35 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.clubRank(alice.address)).to.equal(1);
   });
 
-  it("uses 9 USDT for a second Single-Leg entry at level three", async function () {
+  // A chain of 10 members with 15 recruits under the last one: every chain member has a team of 15+
+  // and a direct, so all 10 cross Single-Leg Level 2, and each counts for every upline within 10 levels.
+  async function addLevelTwoChain(protocol: any, token: any, sponsor: string) {
+    let parent = sponsor;
+    for (let i = 0; i < 10; i++) parent = (await addMembers(protocol, token, parent, 1))[0].address;
+    await addMembers(protocol, token, parent, 15);
+  }
+
+  it("needs 30 team members who crossed Single-Leg Level 2 before Level 3", async function () {
     const { genesis, protocol, token } = await fixture();
     await addMembers(protocol, token, genesis.address, 30);
+    // 30 team members, but none of them has crossed Level 2 yet.
+    expect(await protocol.teamCount(genesis.address)).to.equal(30);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
+    expect(await protocol.singleLegTeamFor(genesis.address, 3)).to.equal(0);
+  });
+
+  it("uses 9 USDT for a second Single-Leg entry at level three", async function () {
+    const { genesis, protocol, token } = await fixture();
+    for (let i = 0; i < 3; i++) await addLevelTwoChain(protocol, token, genesis.address);
+    expect(await protocol.singleLegTeamFor(genesis.address, 3)).to.equal(30);
+    // The last qualifiers were more than 10 levels below the new registrations' sponsors' reach,
+    // so genesis is re-checked explicitly.
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
+    const before = await protocol.pendingSingleLegIncome(genesis.address);
+    await protocol.syncSingleLeg(genesis.address);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(3);
-    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(56_000_000n);
+    // Level 3 pays the member 35 USDT (pending also holds Upline 1/2 shares from the chains).
+    expect((await protocol.pendingSingleLegIncome(genesis.address)) - before).to.equal(35_000_000n);
     expect(await protocol.singleLegEntries(genesis.address)).to.equal(2);
     expect(await protocol.singleLegReentries(genesis.address)).to.equal(1);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);

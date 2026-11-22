@@ -26,6 +26,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Each of the five star clubs receives an equal 3% of every withdrawal.
     uint256 public constant CLUB_SHARE_BPS = 300;
     uint8 private constant STAR_CLUBS = 5;
+    /// @notice Sponsor's share of the 15 USDT Working allocation for each direct after activation.
+    uint256 public constant DIRECT_SHARE_BPS = 8_000;
+    /// @notice Directs needed before direct and upline income is paid.
+    uint64 public constant ACTIVATION_DIRECTS = 2;
+    /// @notice Weekly directs needed to win the Superstar fund.
+    uint64 public constant SUPERSTAR_MIN_DIRECTS = 5;
+    /// @notice Directs added per star club to claim its royalty: 2 Star 4, 3 Star 8, 4 Star 12, 5 Star 16.
+    uint64 public constant CLUB_CLAIM_DIRECTS_STEP = 4;
 
     struct Participant { uint64 id; uint64 directCount; address sponsor; uint64 joinedAt; }
     struct WeeklyCompetition { address leader; uint64 winningDirects; bool closed; }
@@ -116,9 +124,24 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Whether a member has been added to their uplines' level counts (set on register or by sync).
     mapping(address => bool) public levelTeamRecorded;
 
+    // ---- Appended in the on-chain ledger upgrade (uses 6 gap slots). ----
+    /// @notice Lifetime income credited to an account, per reason code (credits from this upgrade onward).
+    mapping(address => mapping(bytes32 => uint256)) public incomeByReason;
+    mapping(address => mapping(bytes32 => uint64)) public incomeCountByReason;
+    /// @notice Lifetime gross amount an account has withdrawn, and how many withdrawals.
+    mapping(address => uint256) public totalWithdrawnGross;
+    mapping(address => uint64) public withdrawCount;
+    mapping(address => address[]) private directList;
+    mapping(address => bool) public directListed;
+
+    // ---- Appended in the held-royalty upgrade (uses 2 gap slots). ----
+    /// @notice Club royalty earned while the member has fewer directs than clubClaimDirects(rank).
+    mapping(address => uint256) public heldRoyalty;
+    uint256 public heldRoyaltyLiability;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[43] private __gap;
+    uint256[35] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -197,8 +220,10 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         participants[sponsor].directCount++;
         memberById[newId] = msg.sender;
         _placeInMatrix(msg.sender, newId);
-        _recordTeamGrowth(sponsor);
+        // Per-level counts first, so rank checks during team growth see this registration.
         _recordLevelTeam(msg.sender);
+        _recordTeamGrowth(sponsor);
+        _recordDirect(msg.sender);
         _recordWeeklyDirect(sponsor);
 
         totalParticipated += ticketPrice;
@@ -218,10 +243,13 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _syncClub(msg.sender);
         _settleClub(msg.sender);
         _settleFiveStar(msg.sender);
+        _releaseHeldRoyalty(msg.sender);
         uint256 gross = claimable[msg.sender];
         if (gross == 0) revert NothingToClaim();
         claimable[msg.sender] = 0;
         totalClaimedGross += gross;
+        totalWithdrawnGross[msg.sender] += gross;
+        withdrawCount[msg.sender]++;
         uint256 royalty = gross * ROYALTY_BPS / BPS;
         uint256 development = gross * DEVELOPMENT_BPS / BPS;
         uint256 net = gross - royalty - development;
@@ -274,6 +302,22 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (toId > memberCount) toId = memberCount;
         for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordLevelTeam(memberById[id]);
     }
+    /// @notice The team size checked for a Single-Leg level. Level 3 counts only team members
+    /// (10 levels deep) who have already crossed Single-Leg Level 2; other levels count the whole team.
+    function singleLegTeamFor(address account, uint8 level) public view returns (uint64) {
+        return level == 3 ? qualifiedLevelTeamCount[account][2] : teamCount[account];
+    }
+    /// @notice Re-checks `account`'s Single-Leg levels. Levels are otherwise re-checked only when
+    /// someone joins within the account's 10-level team. Permissionless; pays only what the rules allow.
+    /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
+    function syncRank(address account) external nonReentrant {
+        if (participants[account].id == 0) revert SponsorNotRegistered(account);
+        _updateRank(account);
+    }
+    function syncSingleLeg(address account) external nonReentrant {
+        if (participants[account].id == 0) revert SponsorNotRegistered(account);
+        _processSingleLeg(account);
+    }
     function settlePoolRewards() external nonReentrant {
         uint256 cap = poolRewardCap(msg.sender);
         uint256 credited = rankedPoolRewardsCredited[msg.sender];
@@ -292,12 +336,39 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit PoolIncomeSettled(msg.sender, singleAmount, workingAmount, nonWorkingAmount);
     }
     function poolRewardCap(address account) public view returns (uint256) {
-        uint8 rank = starRank[account];
-        if (rank >= 5) return type(uint256).max;
-        if (rank == 4) return ticketPrice * 50;
-        if (rank == 3) return ticketPrice * 10;
-        if (rank == 2) return ticketPrice * 5;
-        return ticketPrice * 2;
+        (, , , uint256 cap) = rankRule(starRank[account] == 0 ? 1 : starRank[account]);
+        return cap;
+    }
+    /// @notice The single source of truth for star ranks: directs needed, the referral-tree level and
+    /// the members needed at that level (0 = none), and the lifetime pool-income cap.
+    /// 3 Star = 16 at level 2, 4 Star = 64 at level 3, 5 Star = 300 at level 4, from any of the member's
+    /// directs. Club royalty accrues from rank-up and is claimable with clubClaimDirects(rank) directs.
+    function rankRule(uint8 rank) public view returns (uint64 directs, uint8 qualifiedLevel, uint64 qualifiedCount, uint256 cap) {
+        if (rank == 0 || rank > 5) revert InvalidLevel(rank);
+        if (rank == 1) return (0, 0, 0, ticketPrice * 2);
+        if (rank == 2) return (4, 0, 0, ticketPrice * 5);
+        if (rank == 3) return (0, 2, 16, ticketPrice * 10);
+        if (rank == 4) return (0, 3, 64, ticketPrice * 50);
+        return (0, 4, 300, type(uint256).max);
+    }
+    /// @notice Lifetime gross income credited to `account`: current balance plus everything withdrawn.
+    function lifetimeEarned(address account) external view returns (uint256) {
+        return claimable[account] + totalWithdrawnGross[account];
+    }
+    function directReferralCount(address account) external view returns (uint256) { return directList[account].length; }
+    /// @notice Direct referrals of `account` in join order, paged.
+    function getDirectReferrals(address account, uint256 offset, uint256 limit) external view returns (address[] memory page) {
+        address[] storage list = directList[account];
+        if (offset >= list.length) return page;
+        uint256 end = offset + limit > list.length ? list.length : offset + limit;
+        page = new address[](end - offset);
+        for (uint256 i = offset; i < end; ++i) page[i - offset] = list[i];
+    }
+    /// @notice Adds members registered before on-chain referral lists to their sponsor's list.
+    /// Idempotent and permissionless; run once over all ids, in id order, after upgrading.
+    function syncDirectList(uint64 fromId, uint64 toId) external nonReentrant {
+        if (toId > memberCount) toId = memberCount;
+        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordDirect(memberById[id]);
     }
     function workingLevelQuote(uint8 level)
         external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
@@ -335,7 +406,16 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return _workingUplineBps(level - 1);
     }
     function withdrawable(address account) external view returns (uint256) {
-        return claimable[account] + pendingFiveStarReward(account) + pendingClubReward(account);
+        if (!royaltyClaimable(account)) return claimable[account];
+        return claimable[account] + pendingFiveStarReward(account) + pendingClubReward(account) + heldRoyalty[account];
+    }
+    /// @notice Total directs needed to claim a star club's royalty: 0, 4, 8, 12, 16 for 1–5 Star.
+    function clubClaimDirects(uint8 rank) public pure returns (uint64) {
+        return rank <= 1 ? 0 : CLUB_CLAIM_DIRECTS_STEP * (rank - 1);
+    }
+    /// @notice Whether the account may claim royalty from its current club; otherwise it is held.
+    function royaltyClaimable(address account) public view returns (bool) {
+        return participants[account].directCount >= clubClaimDirects(starRank[account]);
     }
     function getParticipant(address account) external view returns (Participant memory) { return participants[account]; }
     function getMatrixChildren(address account) external view returns (address[2] memory) { return matrixChildren[account]; }
@@ -349,7 +429,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 outstandingClaims = totalGrossRewards - totalClaimedGross;
         return paymentToken.balanceOf(address(this))
             >= outstandingClaims + workingReserve + singleLegReserve + nonWorkingReserve + superstarReserve
-                + fiveStarLiability + clubLiability;
+                + fiveStarLiability + clubLiability + heldRoyaltyLiability;
     }
 
     function _placeInMatrix(address account, uint64 position) private {
@@ -399,15 +479,29 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         }
     }
 
+    function _recordDirect(address member) private {
+        if (member == address(0) || directListed[member]) return;
+        directListed[member] = true;
+        address sponsor = participants[member].sponsor;
+        if (sponsor != address(0)) directList[sponsor].push(member);
+    }
+
     function _updateRank(address account) private {
         uint64 directs = participants[account].directCount;
         uint8 next = participants[account].id == 0 ? 0 : 1;
-        if (directs >= 4) next = 2;
-        if (directs >= 4 && qualifiedLevelTeamCount[account][2] >= 16) next = 3;
-        if (directs >= 4 && qualifiedLevelTeamCount[account][3] >= 64) next = 4;
-        if (directs >= 4 && qualifiedLevelTeamCount[account][4] >= 300) next = 5;
+        if (next != 0) {
+            for (uint8 rank = 5; rank >= 2; --rank) {
+                (uint64 needDirects, uint8 level, uint64 needTeam, ) = rankRule(rank);
+                if (directs >= needDirects && (level == 0 || levelTeamCount[account][level] >= needTeam)) {
+                    next = rank;
+                    break;
+                }
+            }
+        }
         uint8 previous = starRank[account];
         if (next <= previous) return;
+        // Settle royalty earned in the old club under the old rank's claim rule, then move clubs.
+        _settleClub(account);
         starRank[account] = next;
         _syncClub(account);
         if (next == 5) {
@@ -500,19 +594,19 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _processSingleLeg(address account) private {
         uint8 level = singleLegLevel[account] + 1;
         while (
-            level <= 10 && teamCount[account] >= _singleLegMembers(level)
+            level <= 10 && singleLegTeamFor(account, level) >= _singleLegMembers(level)
                 && participants[account].directCount >= _singleLegDirects(level)
         ) {
-            uint256 ownAmount = (_singleLegIncome(level) + _singleLegExtra(level)) * tokenUnit;
-            if (level == 2) {
-                uint256 redirect = 5 * tokenUnit;
-                ownAmount = 15 * tokenUnit;
+            // Single-Leg Pool (Hybrid) table: "Your income" goes to the member; the "Global pool +
+            // re-entry" column is $5 into the Non-Working (Global) pool at Level 1 and a $9 re-entry at Level 3.
+            uint256 ownAmount = _singleLegIncome(level) * tokenUnit;
+            if (level == 1) {
+                uint256 redirect = _singleLegExtra(level) * tokenUnit;
                 pendingNonWorkingRedirect += redirect;
                 nonWorkingEntryCredit[account] += redirect;
                 emit NonWorkingEntryFunded(account, redirect);
             } else if (level == 3) {
-                uint256 reentry = 9 * tokenUnit;
-                ownAmount = 26 * tokenUnit;
+                uint256 reentry = _singleLegExtra(level) * tokenUnit;
                 singleLegReentries[account]++;
                 singleLegEntries[account]++;
                 emit SingleLegReentered(account, singleLegEntries[account], reentry);
@@ -617,16 +711,16 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function _singleLegDirects(uint8 level) private pure returns (uint64) {
-        if (level <= 2) return 1;
-        if (level <= 5) return 2;
+        if (level <= 3) return 1;
+        if (level == 4) return 2;
         if (level <= 8) return 3;
         return 4;
     }
 
     function _singleLegIncome(uint8 level) private pure returns (uint256) {
-        if (level == 1) return 10;
+        if (level == 1) return 11;
         if (level == 2) return 15;
-        if (level == 3) return 26;
+        if (level == 3) return 35;
         if (level == 4) return 50;
         if (level == 5) return 150;
         if (level == 6) return 500;
@@ -636,9 +730,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 15_000;
     }
 
+    /// @dev "Global pool + re-entry" column: Level 1 funds the Non-Working pool, Level 3 is the re-entry.
     function _singleLegExtra(uint8 level) private pure returns (uint256) {
         if (level == 1) return 5;
-        if (level == 2) return 5;
         if (level == 3) return 9;
         return 0;
     }
@@ -670,7 +764,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 amount = pendingFiveStarReward(account);
         fiveStarRewardDebt[account] += amount * ACC;
         fiveStarLiability -= amount;
-        _credit(account, amount, keccak256("FIVE_STAR_ROYALTY"));
+        _creditOrHoldRoyalty(account, amount, keccak256("FIVE_STAR_ROYALTY"));
     }
     /// @dev Splits the withdrawal royalty equally across the five star clubs. A club with
     /// no members forwards its share to the club vault, as the 5 Star club always has.
@@ -716,6 +810,22 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (amount == 0) return;
         clubRewardDebt[account] += amount * ACC;
         clubLiability -= amount;
+        _creditOrHoldRoyalty(account, amount, keccak256("STAR_CLUB_ROYALTY"));
+    }
+    function _creditOrHoldRoyalty(address account, uint256 amount, bytes32 reason) private {
+        if (amount == 0) return;
+        if (royaltyClaimable(account)) {
+            _credit(account, amount, reason);
+        } else {
+            heldRoyalty[account] += amount;
+            heldRoyaltyLiability += amount;
+        }
+    }
+    function _releaseHeldRoyalty(address account) private {
+        uint256 amount = heldRoyalty[account];
+        if (amount == 0 || !royaltyClaimable(account)) return;
+        heldRoyalty[account] = 0;
+        heldRoyaltyLiability -= amount;
         _credit(account, amount, keccak256("STAR_CLUB_ROYALTY"));
     }
     function _distributeFiveStarOrVault(uint256 amount) private {
@@ -730,6 +840,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (amount == 0) return;
         claimable[account] += amount;
         totalGrossRewards += amount;
+        incomeByReason[account][reason] += amount;
+        incomeCountByReason[account][reason]++;
         emit RewardCredited(account, amount, reason);
     }
     function _receiveExact(address from, uint256 amount) private {
