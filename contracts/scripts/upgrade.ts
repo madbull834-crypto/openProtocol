@@ -11,7 +11,9 @@ async function main() {
   const proxyAddress = required("PROTOCOL_PROXY_ADDRESS");
   const previousImplementation = await upgrades.erc1967.getImplementationAddress(proxyAddress);
   const factory = await ethers.getContractFactory("OpenProtocolParticipation", upgradeAdmin);
-  const protocol = await upgrades.upgradeProxy(proxyAddress, factory, { kind: "uups" });
+  // Optional one-time initializer to run inside the upgrade transaction, e.g. UPGRADE_CALL=initializeTicket30.
+  const call = process.env.UPGRADE_CALL?.trim();
+  const protocol = await upgrades.upgradeProxy(proxyAddress, factory, { kind: "uups", ...(call ? { call: { fn: call } } : {}) });
   await protocol.waitForDeployment();
   // Public RPCs can lag the upgrade block; wait before reading the new implementation slot.
   await new Promise((resolve) => setTimeout(resolve, 6_000));

@@ -22,7 +22,8 @@ const streamIcons: Record<string, LucideIcon> = {
 
 const split = [
   { name: "Working Matrix", value: 15, tone: "blue", note: "Direct and nine-level upline income" },
-  { name: "Single-Leg", value: 9, tone: "green", note: "Level rewards, redirect and automatic re-entry" },
+  { name: "Non-Working", value: 5, tone: "purple", note: "Non-Working level income and re-entry" },
+  { name: "Single-Leg", value: 9, tone: "green", note: "Level rewards and automatic re-entry" },
   { name: "Weekly Superstar", value: 1, tone: "gold", note: "Weekly recruiter reward fund" },
 ];
 
@@ -36,12 +37,12 @@ const pillars = [
 const steps = [
   { icon: Wallet, title: "Connect a wallet", copy: "MetaMask, Trust Wallet, SafePal or any BSC-compatible wallet." },
   { icon: UserPlus, title: "Confirm your sponsor", copy: "Use your invite link, or the default sponsor if you weren't invited." },
-  { icon: ShieldCheck, title: "Approve and register", copy: "One fixed 25 USDT entry, split by the contract in the same transaction." },
+  { icon: ShieldCheck, title: "Approve and register", copy: "One fixed 30 USDT entry, split by the contract in the same transaction." },
   { icon: Sparkles, title: "Track and claim", copy: "Follow every income stream on your dashboard and claim to your wallet." },
 ];
 
 const faqs = [
-  ["What does it cost to join?", "One fixed registration of 25 USDT, paid once. On this testnet build you use free test USDT that has no monetary value."],
+  ["What does it cost to join?", "One fixed registration of 30 USDT, paid once. On this testnet build you use free test USDT that has no monetary value."],
   ["Who holds the funds?", "No one. The contract splits each registration into its pools in the same transaction. There is no admin wallet and no manual custody."],
   ["How are earnings paid?", `Rewards are credited on-chain under ${incomeStreams.length} income reason codes. Reserve-backed matrix income is settled up to your cap, and everything is claimed to your own wallet.`],
   ["Is this ready for real money?", "No. This is a testnet validation build. The contracts need an independent audit before production use, and the protocol promises no returns."],
@@ -50,7 +51,7 @@ const faqs = [
 const reveal = { initial: { opacity: 0, y: 18 }, whileInView: { opacity: 1, y: 0 }, viewport: { once: true, margin: "-60px" }, transition: { duration: .5, ease: [.25, .1, .25, 1] } } as const;
 
 export function Landing({ memberCount, total, ticket, member, joinPrompt, onLaunch }: { memberCount?: bigint; total?: bigint; ticket?: bigint; member?: { address: Address; id: bigint }; joinPrompt?: { connected: boolean; onJoin: () => void }; onLaunch: () => void }) {
-  const price = ticket === undefined ? "25" : formatToken(ticket);
+  const price = ticket === undefined ? "30" : formatToken(ticket);
   const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   return <div className="lp">

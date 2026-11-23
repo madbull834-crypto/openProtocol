@@ -69,6 +69,25 @@ Future implementations are deployed with `PROTOCOL_PROXY_ADDRESS=<proxy> npm run
 
 The deployment script does not deploy placeholder pool vaults. Externally owned accounts should not be used as production pool destinations.
 
+## Current BSC Testnet deployment
+
+| | Address |
+|---|---|
+| Protocol proxy (use this everywhere) | `0x40c64072Af2e12062Ca5ABC60b62640388982dF6` |
+| Implementation | `0x3e2153ab15b28698880E76e98e505523a0Dac446` |
+| Deployment block (`INDEXER_START_BLOCK`) | `144453504` |
+| Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
+| Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
+
+Fresh deployment on 2026-11-24 with the 30 USDT ticket (15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar). Set
+`PROTOCOL_PROXY_ADDRESS`, `VITE_PROTOCOL_ADDRESS` and `INDEXER_PROTOCOL_ADDRESS` to the proxy and
+`INDEXER_START_BLOCK=144453504`. When switching an existing server from the previous proxy
+(`0x1aD54218F561E5Be00D982aC7C0298CE27fBcE47`), clear the indexed tables before restarting the indexer:
+
+```sql
+TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "BlockCheckpoint" RESTART IDENTITY;
+```
+
 ## Verification and security
 
 The contract uses an ERC-1967 UUPS proxy. Only the owner can authorize a compatible implementation upgrade; registration funds cannot be moved through an arbitrary admin call. Use a reviewed multisig and timelock as the production owner. Tests are necessary, not sufficient: commission an independent smart-contract and storage-layout audit and obtain legal review before any mainnet or public financial launch.

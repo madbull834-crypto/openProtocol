@@ -16,8 +16,9 @@ import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
 
 const allocation = [
   { name: "Working Matrix", value: 15, tone: "blue", note: "Funds 80% direct income and the nine Working Matrix upline levels." },
-  { name: "Single-Leg", value: 9, tone: "green", note: "Funds Single-Leg rewards, the Level 1 redirect and Level 3 re-entry." },
-  { name: "Weekly Superstar", value: 1, tone: "purple", note: "Added to the weekly fund for a recruiter who reaches at least five directs." },
+  { name: "Non-Working", value: 5, tone: "purple", note: "Funds Non-Working level income and re-entry, paid straight into the Non-Working pool." },
+  { name: "Single-Leg", value: 9, tone: "green", note: "Funds Single-Leg level rewards and the Level 3 re-entry." },
+  { name: "Weekly Superstar", value: 1, tone: "gold", note: "Added to the weekly fund for a recruiter who reaches at least five directs." },
 ];
 
 const configured = Boolean(protocolAddress);
@@ -137,7 +138,7 @@ function GetTestUsdtButton() {
 }
 
 const faqs = [
-  ["What does it cost to join?", "One fixed registration of 25 USDT, paid once. On this testnet build you use free test USDT that has no monetary value."],
+  ["What does it cost to join?", "One fixed registration of 30 USDT, paid once. On this testnet build you use free test USDT that has no monetary value."],
   ["Who holds the funds?", "No one. The smart contract splits each registration into its pools in the same transaction. There is no admin wallet and no manual custody."],
   ["Why do I need a sponsor?", "Every member joins under an existing member, and the link is recorded on-chain permanently. If you were not invited, the verified testnet sponsor is filled in for you."],
   ["What do I need to get started?", "A BSC-compatible wallet such as MetaMask, Trust Wallet or SafePal, and a little test BNB for gas. Test USDT can be minted in one click during registration."],
@@ -154,7 +155,7 @@ const features = [
 function Overview({ memberCount, total, ticket, invariant, registered, member, joinPrompt, onParticipate, onDashboard, onMechanics }: { memberCount?: bigint; total?: bigint; ticket?: bigint; invariant?: boolean; registered: boolean; member?: { address: Address; id: bigint }; joinPrompt?: { connected: boolean; onJoin: () => void }; onParticipate: () => void; onDashboard: () => void; onMechanics: () => void }) {
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   const primary = registered ? { label: "Open dashboard", onClick: onDashboard } : { label: "Get started", onClick: onParticipate };
-  const price = ticket === undefined ? "25" : formatToken(ticket);
+  const price = ticket === undefined ? "30" : formatToken(ticket);
   return <motion.div {...fade}>
     <section className="home-hero">
       <div className="wrap-wide home-hero-grid">
@@ -333,9 +334,9 @@ function Participate({ address, currentChain, token, ticket, registered, refresh
       : /SponsorNotRegistered/i.test(register.error.message)
         ? "The selected sponsor is not registered. Use the verified testnet sponsor shown above."
         : /insufficient.*balance|exceeds balance/i.test(register.error.message)
-          ? "Your wallet needs at least 25 USDT before it can register."
+          ? `Your wallet needs at least ${formatToken(ticket ?? 30_000_000n)} USDT before it can register.`
           : /allowance|approval/i.test(register.error.message)
-            ? "The USDT approval is missing or expired. Approve 25 USDT again."
+            ? `The USDT approval is missing or expired. Approve ${formatToken(ticket ?? 30_000_000n)} USDT again.`
             : /user rejected|user denied/i.test(register.error.message)
               ? "Registration was cancelled in your wallet."
               : /current chain.*does not match|chain mismatch/i.test(register.error.message)
@@ -882,7 +883,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-lifecycle">
           <article><span className="db-icon"><Zap size={16}/></span><small>Single-Leg entries</small><b>{singleLegEntries?.toString() ?? "—"}</b><em>{singleLegReentries?.toString() ?? "0"} automatic re-entry at Level 3</em></article>
           <article><span className="db-icon"><Network size={16}/></span><small>Non-working re-entry</small><b>{nonWorkingReentries?.toString() ?? "—"}</b><em>One cycle per 30 qualified team members</em></article>
-          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working entry</small><b>{formatToken(nonWorkingEntryCredit)} <i>USDT</i></b><em>Funded by the 5 USDT Single-Leg Level 1 redirect</em></article>
+          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working entry</small><b>{formatToken(nonWorkingEntryCredit)} <i>USDT</i></b><em>Your 5 USDT ticket share · entered at Single-Leg Level 1</em></article>
           <article><span className="db-icon"><ShieldCheck size={16}/></span><small>Pool earning cap</small><b>{capLabel}</b><em>{teamIncome.unlimited ? "No pool cap at this rank" : `${formatToken(teamIncome.capLeft)} USDT capacity remaining`}</em></article>
         </div>
 
@@ -1596,7 +1597,7 @@ function Mechanics() { return <motion.div {...fade}>
     <section className="page-hero"><div className="wrap center"><p className="eyebrow">Mechanics</p><h1>Facts.<br/><span className="grad">Kept apart from claims.</span></h1><p className="sub">Only rules that reconcile with the source document are executable. Everything else waits for written clarification.</p></div></section>
     <section className="band gray">
       <div className="wrap-wide bento three">{[
-        ["A single $25 ticket.", "The source document defines one USDT ticket, settled on BNB Smart Chain."],
+        ["A single $30 ticket.", "The source document defines one USDT ticket, settled on BNB Smart Chain."],
         ["Allocation to the dollar.", "$15 to the Working Matrix, $9 to Single-Leg, and $1 to the Weekly Superstar fund. Enforced on every ticket."],
         ["Sponsorship, written once.", "A wallet registers once, against an existing sponsor. The record never changes."],
         ["No one holds the keys.", "The implemented core has no owner, no upgrade path, no pause switch and no rescue authority."],

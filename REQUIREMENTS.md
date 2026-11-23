@@ -21,7 +21,7 @@ Source: *Community Funding Protocol*, 27 pages, supplied 2026-11-11. Page refere
 | Withdrawal | Royalty/club fund (3% each to 1–5 Star) | 15% | client change, 2026-11-22 (PDF: 17%) |
 | Withdrawal | Development and maintenance | 5% | client change, 2026-11-22 (PDF: 3%) |
 
-The participation split reconciles to $25. The withdrawal split reconciles to 100%.
+The participation split reconciles to $30 (client update 2026-11-24): 15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar. The withdrawal split reconciles to 100%.
 
 ## Testnet prototype assumptions
 
@@ -31,7 +31,7 @@ The implementation now includes deterministic rules where the source PDF is inco
 - Team size counts sponsor descendants up to ten sponsor levels.
 - "Your first direct referral helps you upgrade": the 80% working share (12 USDT) of a sponsor's first direct (`RESERVED_DIRECTS` = 1) is reserved for the upgrade (Working reserve, `autoUpgradeCredit`). From the second direct onward, that 12 USDT is paid to the sponsor as direct income. Ten-level upline eligibility still needs 2 directs (`ACTIVATION_DIRECTS`).
 - The remaining Working Matrix allocation pays the sponsor's uplines at 10%, 4%, 2%, then 0.5% at levels 4–9. The remaining 1% stays in the Working reserve. Missing or inactive uplines are not replaced.
-- The 9 USDT registration allocation funds Single-Leg, per the Single-Leg Pool (Hybrid) table (client update 2026-11-22): Level 1 pays 11 USDT and redirects 5 USDT into the member's Non-Working (Global) pool; Level 2 pays 15 USDT; Level 3 pays 35 USDT plus a one-time 9 USDT re-entry; Levels 4–10 pay 50, 150, 500, 1,500, 3,500, 10,000 and 15,000 USDT. People required after your position are cumulative — the table's per-level team (10, 15, 30, 60, 250, 600, 1,000, 1,500, 2,500, 3,700) added up — so the totals are 10, 25, 55, 115, 365, 965, 1,965, 3,465, 5,965 and 9,665. Directs required are cumulative — the table's per-level directs (1, 1, 1, 2, 3, 3, 3, 3, 4, 4) added up — so the totals are 1, 2, 3, 5, 8, 11, 14, 17, 21 and 25 for Levels 1–10. Single-Leg is one global line, first come first served: every registration takes the next position, and a position's team is every position after it, whoever sponsored them. Reaching Level 3 on a member's first position adds a re-entry position at the end of the line, which climbs Levels 1–10 and pays the level income again (no further redirect or re-entry). Direct requirements use the owner's directs; Upline 1/2 payouts go to the owner's sponsor chain. `syncSingleLeg` re-checks a member's positions. The unused Global Matrix placement was removed (storage kept for layout).
+- The 9 USDT registration allocation funds Single-Leg, per the Single-Leg Pool (Hybrid) table (client update 2026-11-22): Level 1 pays 11 USDT and enters the member into the Non-Working matrix (no redirect: every ticket pays 5 USDT straight into the Non-Working pool); Level 2 pays 15 USDT; Level 3 pays 35 USDT plus a one-time 9 USDT re-entry; Levels 4–10 pay 50, 150, 500, 1,500, 3,500, 10,000 and 15,000 USDT. People required after your position are cumulative — the table's per-level team (10, 15, 30, 60, 250, 600, 1,000, 1,500, 2,500, 3,700) added up — so the totals are 10, 25, 55, 115, 365, 965, 1,965, 3,465, 5,965 and 9,665. Directs required are cumulative — the table's per-level directs (1, 1, 1, 2, 3, 3, 3, 3, 4, 4) added up — so the totals are 1, 2, 3, 5, 8, 11, 14, 17, 21 and 25 for Levels 1–10. Single-Leg is one global line, first come first served: every registration takes the next position, and a position's team is every position after it, whoever sponsored them. Reaching Level 3 on a member's first position adds a re-entry position at the end of the line, which climbs Levels 1–10 and pays the level income again (no further redirect or re-entry). Direct requirements use the owner's directs; Upline 1/2 payouts go to the owner's sponsor chain. `syncSingleLeg` re-checks a member's positions. The unused Global Matrix placement was removed (storage kept for layout).
 - The confirmed Single-Leg thresholds are Level 1 at 10 team/1 direct, Level 2 at 15 team/1 direct and Level 3 at 30 team/2 directs. Levels 4–10 retain the existing published table.
 - Business clarification: Single-Leg Level 3 requires Levels 1 and 2 to have completed sequentially and at least two personal direct referrals, overriding the PDF row that displayed one direct.
 - Pool turnover is `team size × ID amount`. The next level's ID amount is consumed for auto-upgrade, and the balance is queued 80% to the achiever, 10% to U1, and 10% across U2–U9.
@@ -49,7 +49,7 @@ The implementation now includes deterministic rules where the source PDF is inco
 
 ## Registration and onboarding
 
-- A participant connects a wallet, approves exactly one $25-equivalent ticket in the configured USDT token, and registers with a previously registered sponsor.
+- A participant connects a wallet, approves exactly one $30-equivalent ticket in the configured USDT token, and registers with a previously registered sponsor.
 - Duplicate registration, zero-address participants, self-sponsorship, and unknown sponsors must revert.
 - A single genesis account is registered during proxy initialization so the first external participant has a valid sponsor.
 - Sponsor relationships are permanent. This is the minimal safe interpretation needed to represent a referral graph; matrix placement is not inferred from sponsorship.
@@ -131,6 +131,6 @@ The contract now implements those features under the testnet assumptions above. 
 
 ## Calculation examples
 
-- One ticket: 25 USDT debited; 15 working + 9 non-working + 1 club = 25 USDT.
+- One ticket: 30 USDT debited; 15 Working + 5 Non-Working + 9 Single-Leg + 1 Superstar = 30 USDT. A live proxy is moved to the 30 USDT ticket once with `initializeTicket30` (owner only, run in the upgrade transaction).
 - 100 tickets: 2,500 USDT received/transferred; 1,500 working + 900 non-working + 100 club = 2,500 USDT.
 - Hypothetical withdrawal split only: 100 USDT gross → 80 user + 17 royalty + 3 development. This is documented but not implemented because eligibility and recipients are undefined.

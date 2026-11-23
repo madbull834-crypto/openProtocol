@@ -162,9 +162,13 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// joining and enters Level L+1 by completing Level L. Level L (L >= 2) completes with 2×L of them.
     mapping(address => mapping(uint8 => uint64)) public workingEnteredCount;
 
+    // ---- Appended in the 30 USDT ticket upgrade (uses 1 gap slot). ----
+    /// @notice Share of every ticket paid straight into the Non-Working pool (5 USDT of 30).
+    uint256 public nonWorkingTicketAllocation;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[27] private __gap;
+    uint256[26] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -212,10 +216,10 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         nonWorkingPool = nonWorkingPool_;
         fiveStarClub = fiveStarClub_;
         developmentFund = developmentFund_;
-        ticketPrice = 25 * unit;
         workingAllocation = 15 * unit;
         nonWorkingAllocation = 9 * unit;
         clubAllocation = unit;
+        _setTicket(unit);
         memberCount = 1;
         participants[genesisParticipant_] = Participant(1, 0, address(0), uint64(block.timestamp));
         starRank[genesisParticipant_] = 1;
@@ -226,6 +230,16 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    /// @notice One-time move of a live proxy to the 30 USDT ticket (run in the upgrade transaction).
+    function initializeTicket30() external reinitializer(2) onlyOwner {
+        _setTicket(tokenUnit);
+    }
+    /// @dev 30 USDT ticket: 15 Working, 5 Non-Working, 9 Single-Leg (`nonWorkingAllocation`), 1 Superstar.
+    function _setTicket(uint256 unit) private {
+        ticketPrice = 30 * unit;
+        nonWorkingTicketAllocation = 5 * unit;
+    }
 
     function register(address sponsor) external nonReentrant {
         if (participants[msg.sender].id != 0) revert AlreadyRegistered(msg.sender);
@@ -253,15 +267,15 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
 
         totalParticipated += ticketPrice;
         totalWorkingAllocated += workingAllocation;
-        totalNonWorkingAllocated += nonWorkingAllocation;
+        totalNonWorkingAllocated += nonWorkingAllocation + nonWorkingTicketAllocation;
         totalClubAllocated += clubAllocation;
         _allocateWorking(sponsor, sponsorWasActive);
         singleLegReserve += nonWorkingAllocation;
-        _fundPendingNonWorkingRedirect();
+        nonWorkingReserve += nonWorkingTicketAllocation;
         superstarReserve += clubAllocation;
         emit ParticipantRegistered(msg.sender, sponsor, newId, uint64(block.timestamp));
         emit RankAdvanced(msg.sender, 0, 1);
-        emit ParticipationAllocated(msg.sender, workingAllocation, nonWorkingAllocation, clubAllocation);
+        emit ParticipationAllocated(msg.sender, workingAllocation, nonWorkingAllocation + nonWorkingTicketAllocation, clubAllocation);
     }
 
     function claim() external nonReentrant {
@@ -646,10 +660,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         ) {
             uint256 ownAmount = _singleLegIncome(level) * tokenUnit;
             if (primary && level == 1) {
-                uint256 redirect = _singleLegExtra(level) * tokenUnit;
-                pendingNonWorkingRedirect += redirect;
-                nonWorkingEntryCredit[account] += redirect;
-                emit NonWorkingEntryFunded(account, redirect);
+                // Entering Non-Working: the member's 5 USDT ticket share already funds that pool.
+                nonWorkingEntryCredit[account] = nonWorkingTicketAllocation;
+                emit NonWorkingEntryFunded(account, nonWorkingTicketAllocation);
                 _enterNonWorking(account);
             } else if (primary && level == 3) {
                 singleLegReentries[account]++;
@@ -694,14 +707,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit LevelAdvanced(account, workingLevel[account], newLevel);
     }
 
-    function _fundPendingNonWorkingRedirect() private {
-        uint256 amount = pendingNonWorkingRedirect;
-        if (amount > singleLegReserve) amount = singleLegReserve;
-        if (amount == 0) return;
-        pendingNonWorkingRedirect -= amount;
-        singleLegReserve -= amount;
-        nonWorkingReserve += amount;
-    }
 
     function _settleSingleLegBacked(address account, uint256 capacity) private returns (uint256 amount) {
         amount = pendingSingleLegIncome[account];
@@ -796,7 +801,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
 
     /// @dev "Global pool + re-entry" column: Level 1 funds the Non-Working pool, Level 3 is the re-entry.
     function _singleLegExtra(uint8 level) private pure returns (uint256) {
-        if (level == 1) return 5;
         if (level == 3) return 9;
         return 0;
     }

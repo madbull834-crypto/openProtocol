@@ -9,7 +9,7 @@ describe("OpenProtocolParticipation", function () {
     const protocol = await upgrades.deployProxy(factory, [
       await token.getAddress(), working.address, nonWorking.address, club.address, development.address, genesis.address,
     ], { initializer: "initialize", kind: "uups" });
-    const ticket = 25_000_000n;
+    const ticket = 30_000_000n;
     for (const member of [alice, bob, carol, dave]) {
       await token.mint(member.address, ticket);
       await token.connect(member).approve(await protocol.getAddress(), ticket);
@@ -22,19 +22,28 @@ describe("OpenProtocolParticipation", function () {
     for (let i = 0; i < count; i++) {
       const member = ethers.Wallet.createRandom().connect(ethers.provider);
       await ethers.provider.send("hardhat_setBalance", [member.address, "0x56BC75E2D63100000"]);
-      await token.mint(member.address, 25_000_000n);
-      await token.connect(member).approve(await protocol.getAddress(), 25_000_000n);
+      await token.mint(member.address, 30_000_000n);
+      await token.connect(member).approve(await protocol.getAddress(), 30_000_000n);
       await protocol.connect(member).register(sponsor);
       members.push(member);
     }
     return members;
   }
 
-  it("creates genesis and atomically records a 25 USDT registration", async function () {
+  it("creates genesis and atomically records a 30 USDT registration", async function () {
     const { genesis, alice, protocol, token, ticket } = await fixture();
+    expect(await protocol.ticketPrice()).to.equal(30_000_000n);
+    // 15 Working, 5 Non-Working + 9 Single-Leg (reported together), 1 Superstar.
     await expect(protocol.connect(alice).register(genesis.address))
       .to.emit(protocol, "ParticipationAllocated")
-      .withArgs(alice.address, 15_000_000n, 9_000_000n, 1_000_000n);
+      .withArgs(alice.address, 15_000_000n, 14_000_000n, 1_000_000n);
+    expect(await protocol.nonWorkingReserve()).to.equal(5_000_000n);
+    expect(await protocol.singleLegReserve()).to.equal(9_000_000n);
+    expect(await protocol.superstarReserve()).to.equal(1_000_000n);
+    // The one-time live-proxy migration is owner-only and cannot run twice.
+    await expect(protocol.connect(alice).initializeTicket30()).to.be.reverted;
+    await protocol.connect(genesis).initializeTicket30();
+    await expect(protocol.connect(genesis).initializeTicket30()).to.be.reverted;
     expect(await token.balanceOf(await protocol.getAddress())).to.equal(ticket);
     expect((await protocol.getParticipant(alice.address)).id).to.equal(2);
     expect(await protocol.totalParticipated()).to.equal(ticket);
@@ -92,7 +101,7 @@ describe("OpenProtocolParticipation", function () {
       expect(await protocol.starRank(genesis.address)).to.equal(index === 3 ? 3 : 2);
     }
     expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 2)).to.deep.equal([4n, 16n]);
-    expect(await protocol.rankRule(4)).to.deep.equal([0n, 3n, 64n, 25_000_000n * 50n]);
+    expect(await protocol.rankRule(4)).to.deep.equal([0n, 3n, 64n, 30_000_000n * 50n]);
     // Each direct has 4 directs of its own, so they are 2 Star.
     expect(await protocol.starRank(directs[0].address)).to.equal(2);
   });
@@ -132,7 +141,7 @@ describe("OpenProtocolParticipation", function () {
     const { protocol } = await fixture();
     // Single-Leg Pool (Hybrid) table: Level 1 $11 + $5 global pool, Level 3 $35 + $9 re-entry.
     expect(await protocol.singleLegQuote(1)).to.deep.equal([
-      10n, 1n, 11_000_000n, 5_000_000n, 1_000_000n, 1_000_000n,
+      10n, 1n, 11_000_000n, 0n, 1_000_000n, 1_000_000n,
     ]);
     expect(await protocol.singleLegQuote(2)).to.deep.equal([
       25n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
@@ -205,22 +214,23 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("funds Single-Leg from 9 USDT and redirects 5 USDT at level one", async function () {
+  it("funds Single-Leg from 9 USDT and Non-Working from 5 USDT of every ticket", async function () {
     const { genesis, protocol, token } = await fixture();
     await addMembers(protocol, token, genesis.address, 10);
-    // Level 1 (10 team, 1 direct): 11 USDT to the member and the 5 USDT Non-Working redirect.
+    // Level 1 (10 after you, 1 direct): 11 USDT to the member, who enters the Non-Working matrix.
+    // No redirect: Non-Working is funded 5 USDT per ticket.
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(11_000_000n);
     expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
-    expect(await protocol.nonWorkingReserve()).to.equal(5_000_000n);
+    expect(await protocol.nonWorkingReserve()).to.equal(50_000_000n);
     await addMembers(protocol, token, genesis.address, 14);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1); // 24 after: Level 2 needs 25
     await addMembers(protocol, token, genesis.address, 1);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(26_000_000n);
     expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
-    expect(await protocol.singleLegReserve()).to.equal(220_000_000n); // 25 × 9 − 5 redirect
-    expect(await protocol.poolRewardCap(genesis.address)).to.equal(125_000_000n);
+    expect(await protocol.singleLegReserve()).to.equal(225_000_000n); // 25 × 9, no redirect
+    expect(await protocol.poolRewardCap(genesis.address)).to.equal(150_000_000n); // 2 Star: 5 × 30
     await protocol.connect(genesis).settlePoolRewards();
     // 26 USDT Single-Leg plus 12 USDT Working Level 1 (15 directs: Level 2 needs depth-2 members).
     expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(38_000_000n);
@@ -394,8 +404,8 @@ describe("OpenProtocolParticipation", function () {
     const protocol = await upgrades.deployProxy(factory, [
       await token.getAddress(), working.address, nonWorking.address, club.address, development.address, genesis.address,
     ], { initializer: "initialize", kind: "uups" });
-    await token.mint(alice.address, 25_000_000n);
-    await token.connect(alice).approve(await protocol.getAddress(), 25_000_000n);
+    await token.mint(alice.address, 30_000_000n);
+    await token.connect(alice).approve(await protocol.getAddress(), 30_000_000n);
     await expect(protocol.connect(alice).register(genesis.address))
       .to.be.revertedWithCustomError(protocol, "IncorrectTokenReceipt");
     expect(await protocol.isRegistered(alice.address)).to.equal(false);
