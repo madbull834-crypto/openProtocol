@@ -32,6 +32,7 @@ export const protocolAbi = [
   { type: "function", name: "ROYALTY_BPS", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "DEVELOPMENT_BPS", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "DIRECT_SHARE_BPS", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "RESERVED_DIRECTS", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "ACTIVATION_DIRECTS", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "SUPERSTAR_MIN_DIRECTS", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "workingAllocation", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },

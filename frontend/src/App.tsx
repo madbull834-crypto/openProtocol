@@ -777,7 +777,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
     <section className="db-body"><div className="wrap-wide">
       {tab === "overview" && <div className="db-stack">
-        {!isActive && <div className="db-alert"><span><Zap size={18}/></span><div><b>Refer {rules.activationDirects - directCount} more {rules.activationDirects - directCount === 1 ? "member" : "members"} to activate your income</b><p>Until you have {rules.activationDirects} direct referrals, your direct income and ten-level upline income are not paid to you.{heldForUpgrade ? ` ${formatToken(heldForUpgrade)} USDT of direct income has been redirected to the pool reserve so far.` : ""}</p></div><button className="db-btn" onClick={() => copyText(link, "link")}>{copied === "link" ? "Link copied" : "Copy invite link"}</button></div>}
+        {!isActive && <div className="db-alert"><span><Zap size={18}/></span><div><b>Refer {rules.activationDirects - directCount} more {rules.activationDirects - directCount === 1 ? "member" : "members"} to activate your income</b><p>Your first {rules.reservedDirects === 1 ? "direct's" : `${rules.reservedDirects} directs'`} {formatToken(rules.workingAllocation * rules.directShareBps / 10_000n)} USDT share is reserved for your upgrade, and direct income is paid from the next one. Ten-level upline income starts at {rules.activationDirects} direct referrals.{heldForUpgrade ? ` ${formatToken(heldForUpgrade)} USDT has been reserved so far.` : ""}</p></div><button className="db-btn" onClick={() => copyText(link, "link")}>{copied === "link" ? "Link copied" : "Copy invite link"}</button></div>}
         <div className="db-hero-grid">
           <div className="db-balance">
             <div className="db-balance-top"><span>Available balance</span><span className="db-live"><i/> Live</span></div>
@@ -1062,6 +1062,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
 function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs: number; heldForUpgrade?: bigint; rules: ProtocolRules }) {
   const need = rules.activationDirects;
+  const reserved = rules.reservedDirects;
   const active = directs >= need;
   const alloc = rules.workingAllocation;
   const share = (bps: bigint) => alloc * bps / 10_000n;
@@ -1071,18 +1072,18 @@ function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs:
   const directIncome = share(rules.directShareBps);
   const allocLabel = formatToken(alloc);
   const rows = [
-    ["Sponsor", pct(rules.directShareBps), usdt(directIncome), `Paid from direct ${need + 1} onward`],
+    ["Sponsor", pct(rules.directShareBps), usdt(directIncome), `Paid from direct ${reserved + 1} onward`],
     ["Sponsor's U1", pct(u1), usdt(share(u1)), "Immediate eligible upline"],
     ["Sponsor's U2", pct(u2), usdt(share(u2)), "Second eligible upline"],
     ["Sponsor's U3", pct(u3), usdt(share(u3)), "Third eligible upline"],
     [`Sponsor's U4–U${deepCount + 3}`, `${pct(deep)} each`, `${usdt(share(deep))} each`, `${deepCount} eligible upline levels`],
   ] as const;
   return <div className="progression-view">
-    <div className="view-heading"><div><small>{allocLabel} USDT WORKING MATRIX</small><h4>Direct and nine-level distribution</h4></div><p>Your first {need} direct referrals activate Working Matrix income. Every direct after that pays the {pct(rules.directShareBps)} sponsor share.</p></div>
+    <div className="view-heading"><div><small>{allocLabel} USDT WORKING MATRIX</small><h4>Direct and nine-level distribution</h4></div><p>Your first {reserved === 1 ? "direct referral helps" : `${reserved} direct referrals help`} you upgrade: its share is reserved. Every direct after that pays you the {pct(rules.directShareBps)} sponsor share. Upline income starts at {need} directs.</p></div>
     <div className="db-summary">
       <div className="primary"><span className="db-sum-icon"><Users size={16}/></span><small>Activation progress</small><b>{Math.min(directs, need)} / {need}</b><span>{active ? "Working Matrix income is active" : `${need - directs} more direct ${need - directs === 1 ? "referral" : "referrals"} required`}</span></div>
       <div><span className="db-sum-icon"><Coins size={16}/></span><small>Direct income</small><b>{formatToken(directIncome)} <em>USDT</em></b><span>{pct(rules.directShareBps)} from every direct after activation</span></div>
-      <div><span className="db-sum-icon"><Lock size={16}/></span><small>First-{need} shares reserved</small><b>{formatToken(heldForUpgrade)} <em>USDT</em></b><span>Up to {formatToken(directIncome * BigInt(need))} USDT retained for activation and reserve backing</span></div>
+      <div><span className="db-sum-icon"><Lock size={16}/></span><small>{reserved === 1 ? "First direct's share reserved" : `First-${reserved} shares reserved`}</small><b>{formatToken(heldForUpgrade)} <em>USDT</em></b><span>{formatToken(directIncome * BigInt(reserved))} USDT reserved for your upgrade</span></div>
     </div>
     <div className="pool-economics">
       <div className="pool-economics-head"><div><small>PER REGISTRATION</small><h4>Exact {allocLabel} USDT distribution</h4></div><div className="pool-selected-summary"><span>Upline eligibility</span><b>{need} direct referrals</b></div></div>

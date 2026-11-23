@@ -30,6 +30,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 public constant DIRECT_SHARE_BPS = 8_000;
     /// @notice Directs needed before direct and upline income is paid.
     uint64 public constant ACTIVATION_DIRECTS = 2;
+    /// @notice "Your first direct referral helps you upgrade": the 80% share of this many first directs is
+    /// reserved for the upgrade; every later direct pays it to the sponsor as direct income.
+    uint64 public constant RESERVED_DIRECTS = 1;
     /// @notice Weekly directs needed to win the Superstar fund.
     uint64 public constant SUPERSTAR_MIN_DIRECTS = 5;
     /// @notice Directs added per star club to claim its royalty: 2 Star 4, 3 Star 8, 4 Star 12, 5 Star 16.
@@ -225,7 +228,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (participants[sponsor].id == 0) revert SponsorNotRegistered(sponsor);
         _receiveExact(msg.sender, ticketPrice);
 
-        bool sponsorWasActive = participants[sponsor].directCount >= 2;
+        bool sponsorWasActive = participants[sponsor].directCount >= RESERVED_DIRECTS;
         _initLine();
         uint64 newId = ++memberCount;
         participants[msg.sender] = Participant(newId, 0, sponsor, uint64(block.timestamp));
