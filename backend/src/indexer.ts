@@ -26,14 +26,13 @@ async function reconcileReorg() {
 }
 
 async function processRange(fromBlock: bigint, toBlock: bigint) {
-  const [registrations, allocations, credits, claims, queued, endBlock] = await Promise.all([
-    client.getLogs({ address: config.protocol, event: participantRegistered, fromBlock, toBlock }),
-    client.getLogs({ address: config.protocol, event: participationAllocated, fromBlock, toBlock }),
-    client.getLogs({ address: config.protocol, event: rewardCredited, fromBlock, toBlock }),
-    client.getLogs({ address: config.protocol, event: claimed, fromBlock, toBlock }),
-    client.getLogs({ address: config.protocol, event: poolIncomeQueued, fromBlock, toBlock }),
-    client.getBlock({ blockNumber: toBlock }),
-  ]);
+  // One request at a time: public RPC nodes rate-limit bursts of parallel eth_getLogs calls.
+  const registrations = await client.getLogs({ address: config.protocol, event: participantRegistered, fromBlock, toBlock });
+  const allocations = await client.getLogs({ address: config.protocol, event: participationAllocated, fromBlock, toBlock });
+  const credits = await client.getLogs({ address: config.protocol, event: rewardCredited, fromBlock, toBlock });
+  const claims = await client.getLogs({ address: config.protocol, event: claimed, fromBlock, toBlock });
+  const queued = await client.getLogs({ address: config.protocol, event: poolIncomeQueued, fromBlock, toBlock });
+  const endBlock = await client.getBlock({ blockNumber: toBlock });
 
   await prisma.$transaction(async (tx) => {
     for (const log of registrations) {
@@ -156,13 +155,30 @@ export async function backfillPoolQueue() {
   return stored;
 }
 
+/** True when an RPC node rejected a request for covering too many blocks or results. */
+function isRangeLimit(error: unknown) {
+  const text = `${(error as { code?: number })?.code ?? ""} ${(error as Error)?.message ?? ""}`.toLowerCase();
+  return /-32005|-32600|-32602|limit exceeded|exceeds defined limit|block range|too many|range is too large|query returned more than/.test(text);
+}
+
+let batchSize = config.batchSize;
+
 export async function syncOnce() {
   let cursor = await reconcileReorg();
   const head = await client.getBlockNumber();
   const target = finalBlock(head, config.confirmations);
   while (cursor <= target) {
-    const end = batchEnd(cursor, target, config.batchSize);
-    await processRange(cursor, end);
+    const end = batchEnd(cursor, target, batchSize);
+    try {
+      await processRange(cursor, end);
+    } catch (error) {
+      // Shrink the block range and retry instead of failing the whole pass.
+      if (!isRangeLimit(error) || batchSize <= 10n) throw error;
+      batchSize = batchSize / 2n;
+      console.warn(`RPC limit hit; retrying with ${batchSize} blocks per request`);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      continue;
+    }
     cursor = end + 1n;
   }
   return { head, indexedThrough: target };
