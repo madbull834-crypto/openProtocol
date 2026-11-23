@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "indexer": "tsx src/indexer.ts",
     "indexer:watch": "tsx src/indexer.ts --watch",
+    "indexer:backfill-pool-queue": "tsx src/indexer.ts --backfill-pool-queue",
     "build": "prisma generate && tsc",
     "typecheck": "prisma generate && tsc --noEmit",
     "test": "vitest run src",

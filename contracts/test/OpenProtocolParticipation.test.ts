@@ -177,28 +177,31 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(5);
   });
 
-  it("reaches Working levels by members at each depth and pays the table income", async function () {
+  it("fills Working levels with team members who upgraded into them", async function () {
     const { genesis, alice, bob, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
-    expect(await protocol.workingLevel(genesis.address)).to.equal(0);
     await protocol.connect(bob).register(genesis.address);
-    // Level 1 (2 directs): turnover 30, auto-upgrade 15, distributable 15 -> achiever 80% = 12 USDT.
+    // Level 1 completes with 2 directs: turnover 30, auto-upgrade 15 -> 80% of 15 = 12 USDT.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n);
-    // More directs do not reach Level 2: it needs 4 members at depth 2.
-    await addMembers(protocol, token, genesis.address, 3);
+
+    // Depth alone no longer counts: 4 members two levels down who have not upgraded.
+    const [a1, a2] = await addMembers(protocol, token, alice.address, 2); // alice completes L1 -> enters L2
+    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(1);
+    const [b1, b2] = await addMembers(protocol, token, bob.address, 2); // bob enters L2
+    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(2);
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    await addMembers(protocol, token, alice.address, 3);
+
+    // a1 and a2 complete Level 1 too (2 directs each): 4 team members have entered Level 2.
+    await addMembers(protocol, token, a1.address, 2);
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    await addMembers(protocol, token, bob.address, 1);
-    // Level 2 (4 at depth 2): turnover 60, auto-upgrade 30, distributable 30 -> 24 USDT more.
+    await addMembers(protocol, token, a2.address, 2);
+    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(4);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    // 12 + 24 for its own levels, plus 1.5 as alice's U1 when she reached Level 1 (10% of 15).
-    expect(await protocol.workingLevel(alice.address)).to.equal(1); // alice has 3 directs
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(37_500_000n);
-    await expect(protocol.connect(genesis).settlePoolRewards())
-      .to.emit(protocol, "RewardCredited")
-      .withArgs(genesis.address, 37_500_000n, ethers.keccak256(ethers.toUtf8Bytes("WORKING_LEVEL_INCOME")));
+    void b1; void b2;
+    // Level 2: turnover 60, auto-upgrade 30 -> 80% of 30 = 24 USDT, plus U1 10% of alice's and bob's
+    // Level 1 (1.5 each) and U2 1.25% of a1's and a2's Level 1 (0.1875 each).
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n + 24_000_000n + 2n * 1_500_000n + 2n * 187_500n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -293,8 +296,6 @@ describe("OpenProtocolParticipation", function () {
     expect(counts.slice(0, 4)).to.deep.equal([1n, 2n, 1n, 0n]);
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
     expect((await protocol.getLevelTeamCounts(alice.address)).slice(0, 2)).to.deep.equal([2n, 1n]);
-    await protocol.syncLevelTeam(1, 100); // already recorded at registration: no double counting
-    expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 3)).to.deep.equal([1n, 2n, 1n]);
   });
 
   it("keeps an on-chain income ledger, withdrawal totals and referral lists", async function () {
@@ -312,8 +313,6 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.directReferralCount(genesis.address)).to.equal(3);
     expect(await protocol.getDirectReferrals(genesis.address, 0, 10)).to.deep.equal([alice.address, bob.address, carol.address]);
     expect(await protocol.getDirectReferrals(genesis.address, 1, 1)).to.deep.equal([bob.address]);
-    await protocol.syncDirectList(1, 100); // no duplicates
-    expect(await protocol.directReferralCount(genesis.address)).to.equal(3);
   });
 
   it("exposes the rank rules the contract itself enforces", async function () {
@@ -328,22 +327,6 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.SUPERSTAR_MIN_DIRECTS()).to.equal(5);
     expect(await protocol.DIRECT_SHARE_BPS()).to.equal(8_000);
   });
-
-  it("lets anyone enrol existing members into their clubs after an upgrade", async function () {
-    const { genesis, alice, protocol } = await fixture();
-    await protocol.connect(alice).register(genesis.address);
-    await protocol.syncClubMembers(1, 100); // idempotent: already enrolled members are unchanged
-    expect(await protocol.clubMemberCount(1)).to.equal(2);
-    expect(await protocol.clubRank(alice.address)).to.equal(1);
-  });
-
-  // A chain of 10 members with 15 recruits under the last one: every chain member has a team of 15+
-  // and a direct, so all 10 cross Single-Leg Level 2, and each counts for every upline within 10 levels.
-  async function addLevelTwoChain(protocol: any, token: any, sponsor: string) {
-    let parent = sponsor;
-    for (let i = 0; i < 10; i++) parent = (await addMembers(protocol, token, parent, 1))[0].address;
-    await addMembers(protocol, token, parent, 15);
-  }
 
   it("counts everyone who joins after you in the global Single-Leg line", async function () {
     const { genesis, alice, bob, protocol, token } = await fixture();

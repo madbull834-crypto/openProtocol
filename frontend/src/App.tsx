@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { ArrowRight, ArrowUpRight, Award, Calendar, Check, ChevronLeft, ChevronRight, Clock, Coins, Copy, Crown, ExternalLink, Eye, Fuel, Layers, LayoutGrid, Lock, MessageCircle, Network, Send, Share2, ShieldCheck, TrendingUp, Trophy, UserRoundCheck, Users, Wallet, WalletCards, Zap } from "lucide-react";
 import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress, type Address } from "viem";
-import { useAccount, useBalance, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import { useAccount, useBalance, usePublicClient, useReadContract, useReadContracts, useSwitchChain, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponsor, protocolAddress, testTokenAddress, walletConnectEnabled } from "./config";
 import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
-import { incomeName, incomeStreams, useIncomeHistory } from "./income";
+import { incomeName, incomeStreams, useIncomeHistory, useLedger, usePoolSources, type CreditSource, type LedgerFilter } from "./income";
 import { useOnchainDirects, useOnchainIncome, useOnchainTeam, useProtocolRules, useSingleLegLine, type ProtocolRules, type RankRule } from "./onchain";
 import { Landing } from "./Landing";
 import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
@@ -499,25 +500,23 @@ type PoolStatus = "empty" | "ready" | "cap" | "reserve";
  * Mirrors `settlePoolRewards()`: each pool is paid in full or not at all, in the order
  * Single-Leg → Working → Non-Working, limited by the remaining rank cap and the pool reserve.
  */
-function previewSettlement(input: { single?: bigint; working?: bigint; nonWorking?: bigint; cap?: bigint; settled?: bigint; workingReserve?: bigint; nonWorkingReserve?: bigint }) {
+/** Mirrors `settlePoolRewards`: Single-Leg, Working, then Non-Working, each paid in full from its own reserve within the rank cap. */
+function previewSettlement(input: { single?: bigint; working?: bigint; nonWorking?: bigint; cap?: bigint; settled?: bigint; singleLegReserve?: bigint; workingReserve?: bigint; nonWorkingReserve?: bigint }) {
   const cap = input.cap ?? 0n;
   const settled = input.settled ?? 0n;
   const unlimited = cap === MAX_UINT;
   let capacity = unlimited ? MAX_UINT : cap > settled ? cap - settled : 0n;
-  let workingReserve = input.workingReserve ?? 0n;
+  const reserves = { single: input.singleLegReserve ?? 0n, working: input.workingReserve ?? 0n, nonWorking: input.nonWorkingReserve ?? 0n };
   const pools = ([["single", input.single], ["working", input.working], ["nonWorking", input.nonWorking]] as const).map(([key, raw]) => {
     const amount = raw ?? 0n;
-    const reserve = key === "nonWorking" ? input.nonWorkingReserve ?? 0n : workingReserve;
+    const reserve = reserves[key];
     let status: PoolStatus = "ready";
     if (amount === 0n) status = "empty";
     else if (amount > capacity) status = "cap";
     else if (amount > reserve) status = "reserve";
-    if (status === "ready") {
-      if (!unlimited) capacity -= amount;
-      if (key !== "nonWorking") workingReserve -= amount;
-    }
+    if (status === "ready" && !unlimited) capacity -= amount;
     return { key, amount, status };
-  }).filter(pool => pool.key !== "working");
+  });
   const waiting = pools.reduce((sum, p) => sum + p.amount, 0n);
   const movable = pools.filter(p => p.status === "ready").reduce((sum, p) => sum + p.amount, 0n);
   return { pools, waiting, movable, settled, cap, unlimited, capLeft: unlimited ? MAX_UINT : cap > settled ? cap - settled : 0n, earned: waiting + settled, loaded: input.cap !== undefined };
@@ -574,6 +573,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "getLevelTeamCounts", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "heldRoyalty", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "royaltyClaimable", args: [account] },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingReserve" },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -599,7 +599,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     single: pendingSingleLeg, working: pendingWorking, nonWorking: pendingNonWorking,
     cap: rewards.data?.[13]?.result as bigint | undefined,
     settled: rewards.data?.[14]?.result as bigint | undefined,
-    workingReserve: rewards.data?.[15]?.result as bigint | undefined,
+    singleLegReserve: rewards.data?.[15]?.result as bigint | undefined,
+    workingReserve: rewards.data?.[38]?.result as bigint | undefined,
     nonWorkingReserve: rewards.data?.[16]?.result as bigint | undefined,
   });
   const rules = useProtocolRules();
@@ -635,7 +636,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   void creditedIncome;
   const historyAmount = (reason: string) => history.data ? BigInt(history.data.totals[reason]?.amount ?? "0") : undefined;
 
-  const [tab, setTab] = useState<"overview" | "earnings" | "network" | "royalty">("overview");
+  const [tab, setTab] = useState<"overview" | "earnings" | "network" | "royalty" | "ledger">("overview");
+  const [openStream, setOpenStream] = useState<string>();
+  const [ledgerReason, setLedgerReason] = useState<string>();
   const [copied, setCopied] = useState<"link" | "address">();
   const [networkView, setNetworkView] = useState<"working" | "nonworking" | "single" | "reentry">("working");
   const link = address ? `${location.origin}${location.pathname}?ref=${address}` : "";
@@ -689,13 +692,13 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     </motion.div>;
   }
 
-  const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network], ["royalty", "Royalty Income", Crown]] as const;
+  const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network], ["royalty", "Royalty Income", Crown], ["ledger", "Income Ledger", WalletCards]] as const;
   const poolInfo = {
     single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
-    working: { name: "Working", note: "Direct distribution", tone: "green", Icon: Layers, level: 0, max: 1 },
+    working: { name: "Working", note: "A new level with 2×L members at depth L", tone: "green", Icon: Layers, level: working ?? 0, max: 15 },
     nonWorking: { name: "Non-Working", note: "A new level every 2 members who reach Single-Leg Level 1", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
   } as const;
-  const visiblePools = teamIncome.pools.filter(pool => pool.key !== "working");
+  const visiblePools = teamIncome.pools;
   const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 5);
   const statusLabel = (status: PoolStatus) => status === "ready" ? "Ready" : status === "cap" ? "Over cap" : status === "reserve" ? "Awaiting reserve" : "Not started";
   const blockedReason = teamIncome.movable > 0n || teamIncome.waiting === 0n ? undefined
@@ -852,6 +855,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           </div>;
         })()}
 
+        <MyTeam address={address}/>
+
         <div className="db-two">
           <div className="db-card">
             <div className="db-section-head"><div><small>RANK PROGRESS</small><h3>{topRank ? "You've reached 5 Star" : `On your way to ${rankNames[nextRank]}`}</h3></div><b className="db-percent">{Math.round(rankProgress)}%</b></div>
@@ -923,12 +928,13 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           <div className="db-section-head"><div><small>INCOME BY SOURCE</small><h3>Everything you've earned</h3></div>{history.data && <span className="db-tag">{earnedStreams.length} of {incomeStreams.length} sources active</span>}</div>
           {history.isError && <p className="db-warn">Couldn't read your income totals from the contract right now. Your balance above is still accurate.</p>}
           {history.isLoading && <div className="src-skeleton"><i/><i/><i/></div>}
-          {earnedStreams.length > 0 && <ul className="src-list">{earnedStreams.map(({ reason, name, note, amount, count }) => { const Icon = streamIcon(reason); const pct = sourceTotal ? Number(amount * 1000n / sourceTotal) / 10 : 0; return <li key={reason}>
+          {earnedStreams.length > 0 && <ul className="src-list">{earnedStreams.map(({ reason, name, note, amount, count }) => { const Icon = streamIcon(reason); const pct = sourceTotal ? Number(amount * 1000n / sourceTotal) / 10 : 0; const open = openStream === reason; return <li key={reason} className={`src-item${open ? " open" : ""}${reason === "EARLIER" ? " static" : ""}`} onClick={() => reason !== "EARLIER" && setOpenStream(open ? undefined : reason)}>
             <span className="src-icon"><Icon size={16}/></span>
             <div className="src-main">
               <div className="src-top"><b>{name}</b><strong>{formatToken(amount)} <em>USDT</em></strong></div>
               <div className="src-bar"><i style={{ width: `${Math.max(pct, 2)}%` }}/></div>
-              <div className="src-meta"><span>{note}</span><span>{count} {count === 1 ? "payment" : "payments"} · {pct.toFixed(pct < 10 ? 1 : 0)}%</span></div>
+              <div className="src-meta"><span>{note}</span><span>{count} {count === 1 ? "payment" : "payments"} · {pct.toFixed(pct < 10 ? 1 : 0)}%{reason !== "EARLIER" && <ChevronRight size={12} className="src-chevron"/>}</span></div>
+              {open && <StreamEntries address={address} reason={reason} onViewAll={() => { setLedgerReason(reason); setTab("ledger"); }}/>}
             </div>
           </li>; })}</ul>}
           {history.data && idleStreams.length > 0 && <div className="src-idle"><small>NOT EARNED YET</small><div>{idleStreams.map(({ reason, name }) => { const Icon = streamIcon(reason); return <span key={reason} title={incomeStreams.find(x => x.reason === reason)?.note}><Icon size={13}/> {name}</span>; })}</div></div>}
@@ -1056,8 +1062,170 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           </li>)}</ul>}
         </div>
       </div>}
+
+      {tab === "ledger" && <IncomeLedger address={address} lifetime={history.data ? BigInt(history.data.lifetimeCredited) : undefined} withdrawn={history.data?.withdrawnGross} withdrawals={history.data?.claims.count} balance={withdrawable} queued={queued} initialReason={ledgerReason}/>}
     </div></section>
   </motion.div>;
+}
+
+/** Every member of your team (10 sponsor levels), read from the contract, with filters and search. */
+function MyTeam({ address }: { address: Address }) {
+  const team = useOnchainTeam(address);
+  const members = team.data ?? [];
+  const reads = useReadContracts({
+    allowFailure: true,
+    contracts: protocolAddress ? members.flatMap(member => [
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "starRank" as const, args: [member.address] as const },
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevel" as const, args: [member.address] as const },
+    ]) : [],
+    query: { enabled: members.length > 0, refetchInterval: 30_000 },
+  });
+  const [level, setLevel] = useState(0);
+  const [search, setSearch] = useState("");
+  const [shown, setShown] = useState(20);
+  const depths = [...new Set(members.map(member => member.depth))].sort((a, b) => a - b);
+  const query = search.trim().toLowerCase().replace(/^#/, "");
+  const rows = members
+    .map((member, index) => ({ ...member, rank: Number(reads.data?.[index * 2]?.result ?? 0), working: Number(reads.data?.[index * 2 + 1]?.result ?? 0) }))
+    .filter(member => level === 0 || member.depth === level)
+    .filter(member => !query || member.address.toLowerCase().includes(query) || member.memberId === query)
+    .sort((a, b) => a.depth - b.depth || Number(BigInt(a.memberId) - BigInt(b.memberId)));
+  const directs = members.filter(member => member.depth === 1).length;
+
+  return <div className="db-card my-team">
+    <div className="db-section-head"><div><small>MY TEAM</small><h3>Everyone in your team</h3></div><span className="db-tag">{members.length.toLocaleString()} members · {directs} direct</span></div>
+    <div className="my-team-tools">
+      <div className="my-team-levels">
+        <button className={level === 0 ? "active" : ""} onClick={() => { setLevel(0); setShown(20); }}>All</button>
+        {depths.map(depth => <button key={depth} className={level === depth ? "active" : ""} onClick={() => { setLevel(depth); setShown(20); }}>L{depth} <em>{members.filter(member => member.depth === depth).length}</em></button>)}
+      </div>
+      <input value={search} onChange={event => { setSearch(event.target.value); setShown(20); }} placeholder="Search wallet or member #" aria-label="Search team"/>
+    </div>
+    {team.isLoading && <div className="src-skeleton"><i/><i/><i/></div>}
+    {team.isError && <p className="db-warn">Couldn't read your team from the contract right now.</p>}
+    {team.data && members.length === 0 && <p className="db-empty-note">No team members yet. Share your invite link to start building your team.</p>}
+    {rows.length > 0 && <div className="ledger-table-wrap"><table className="ledger-table my-team-table">
+      <thead><tr><th>Member</th><th>Level</th><th>Sponsor</th><th className="num">Directs</th><th>Rank</th><th>Working</th><th>Joined</th></tr></thead>
+      <tbody>{rows.slice(0, shown).map(member => <tr key={member.address}>
+        <td data-label="Member"><span className="my-team-member"><b>#{member.memberId}</b><a className="mono" href={`${explorerUrl}/address/${member.address}`} target="_blank" rel="noreferrer">{shortAddress(member.address)} <ExternalLink size={10}/></a></span></td>
+        <td data-label="Level"><span className={`my-team-depth d${Math.min(member.depth, 4)}`}>{member.depth === 1 ? "Direct" : `Level ${member.depth}`}</span></td>
+        <td data-label="Sponsor" className="mono">{member.sponsor.toLowerCase() === address.toLowerCase() ? "You" : shortAddress(member.sponsor)}</td>
+        <td data-label="Directs" className="num">{member.directCount}</td>
+        <td data-label="Rank">{rankNames[member.rank] ?? "—"}</td>
+        <td data-label="Working">{member.working > 0 ? `Level ${member.working}` : "—"}</td>
+        <td data-label="Joined">{new Date(member.joinedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</td>
+      </tr>)}</tbody>
+    </table></div>}
+    {team.data && members.length > 0 && rows.length === 0 && <p className="db-empty-note">No members match this filter.</p>}
+    {rows.length > shown && <div className="ledger-pages"><button className="db-btn" onClick={() => setShown(shown + 20)}>Show more ({(rows.length - shown).toLocaleString()} more)</button></div>}
+  </div>;
+}
+
+/** Where a credit came from: the member who triggered it (linked) and a plain explanation. */
+function SourceNote({ source }: { source: CreditSource | null }) {
+  if (!source) return <span className="src-note">Credited to your balance</span>;
+  return <span className="src-note">
+    {source.member && <a className="mono" href={`${explorerUrl}/address/${source.member.address}`} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()}>#{source.member.memberId} · {shortAddress(source.member.address)}</a>}
+    <span>{source.note}</span>
+  </span>;
+}
+
+/** The latest payments of one income type, each with its source, shown under the Earnings breakdown. */
+const POOL_OF_REASON: Record<string, number> = { SINGLE_LEG_INCOME: 1, WORKING_LEVEL_INCOME: 2, NON_WORKING_MATRIX_INCOME: 3 };
+
+function StreamEntries({ address, reason, onViewAll }: { address: Address; reason: string; onViewAll: () => void }) {
+  const ledger = useLedger(address, { kind: "credit", reason, page: 1 }, 10);
+  const pool = POOL_OF_REASON[reason];
+  const sources = usePoolSources(address, pool);
+  return <div className="src-entries" onClick={event => event.stopPropagation()}>
+    {pool && <div className="src-origin">
+      <small>WHERE IT CAME FROM</small>
+      {sources.isLoading && <p className="db-foot-note">Loading levels…</p>}
+      {sources.isError && <p className="db-warn">Level details aren't available right now.</p>}
+      {sources.data && sources.data.length === 0 && <p className="db-foot-note">No pool levels recorded yet.</p>}
+      {sources.data && sources.data.length > 0 && <ul>{sources.data.map(item => <li key={`${item.txHash}-${item.member?.address ?? "own"}-${item.level}`}>
+        <b className={item.own ? "own" : ""}>+{formatToken(BigInt(item.share))} <em>USDT</em></b>
+        <span className="src-note">
+          {item.member && <a className="mono" href={`${explorerUrl}/address/${item.member.address}`} target="_blank" rel="noreferrer">{item.member.memberId ? `#${item.member.memberId} · ` : ""}{shortAddress(item.member.address)}</a>}
+          <span>{item.note}</span>
+        </span>
+        <a className="src-tx" href={`${explorerUrl}/tx/${item.txHash}`} target="_blank" rel="noreferrer"><ExternalLink size={11}/></a>
+      </li>)}</ul>}
+      <p className="db-foot-note">These are queued into your pool as levels are reached, then paid to your balance when you move team income (below).</p>
+    </div>}
+    {pool && <small className="src-sub">MOVED TO YOUR BALANCE</small>}
+    {ledger.isLoading && <p className="db-foot-note">Loading payments…</p>}
+    {ledger.isError && <p className="db-warn">Payment details aren't available right now.</p>}
+    {ledger.data && ledger.data.entries.length === 0 && <p className="db-foot-note">These were credited before per-payment history was recorded.</p>}
+    {ledger.data && ledger.data.entries.length > 0 && <ul>{ledger.data.entries.map(entry => <li key={`${entry.txHash}-${entry.logIndex}`}>
+      <b>+{formatToken(BigInt(entry.amount))} <em>USDT</em></b>
+      <SourceNote source={entry.source}/>
+      <a className="src-tx" href={`${explorerUrl}/tx/${entry.txHash}`} target="_blank" rel="noreferrer"><ExternalLink size={11}/></a>
+    </li>)}</ul>}
+    {ledger.data && ledger.data.total > ledger.data.entries.length && <button className="db-text-btn" onClick={onViewAll}>View all {ledger.data.total} in Income Ledger <ChevronRight size={13}/></button>}
+  </div>;
+}
+
+/** Every income credit and withdrawal, newest first. Totals come from the contract; entries from its events. */
+function IncomeLedger({ address, lifetime, withdrawn, withdrawals, balance, queued, initialReason }: { address: Address; lifetime?: bigint; withdrawn?: bigint; withdrawals?: number; balance?: bigint; queued: bigint; initialReason?: string }) {
+  const [filter, setFilter] = useState<LedgerFilter>(initialReason ? { kind: "credit", reason: initialReason, page: 1 } : { kind: "all", page: 1 });
+  useEffect(() => { if (initialReason) setFilter({ kind: "credit", reason: initialReason, page: 1 }); }, [initialReason]);
+  const ledger = useLedger(address, filter);
+  const client = usePublicClient({ chainId: requiredChainId });
+  const blocks = [...new Set(ledger.data?.entries.map(entry => entry.blockNumber) ?? [])];
+  const times = useQuery({
+    queryKey: ["block-times", blocks.join(",")],
+    enabled: Boolean(client && blocks.length),
+    staleTime: Infinity,
+    queryFn: async () => Object.fromEntries(await Promise.all(blocks.map(async block => [block, Number((await client!.getBlock({ blockNumber: BigInt(block) })).timestamp)] as const))),
+  });
+  const pages = ledger.data ? Math.max(1, Math.ceil(ledger.data.total / ledger.data.pageSize)) : 1;
+  const choose = (next: Omit<LedgerFilter, "page">) => setFilter({ ...next, page: 1 });
+  const when = (block: string) => times.data?.[block] ? new Date(times.data[block] * 1000).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : `Block ${Number(block).toLocaleString()}`;
+
+  return <div className="db-stack">
+    <div className="db-summary ledger-summary">
+      <div className="primary"><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime earned</small><b>{formatToken(lifetime)} <em>USDT</em></b><span>Every income credited to you</span></div>
+      <div><span className="db-sum-icon"><ArrowUpRight size={16}/></span><small>Withdrawn</small><b>{formatToken(withdrawn)} <em>USDT</em></b><span>{withdrawals ?? 0} {withdrawals === 1 ? "withdrawal" : "withdrawals"} (gross)</span></div>
+      <div><span className="db-sum-icon"><Wallet size={16}/></span><small>Balance</small><b>{formatToken(balance)} <em>USDT</em></b><span>{queued > 0n ? `+ ${formatToken(queued)} USDT team income in pools` : "Ready to withdraw"}</span></div>
+    </div>
+
+    <div className="db-card ledger-card">
+      <div className="db-section-head"><div><small>INCOME LEDGER</small><h3>Every credit and withdrawal</h3></div>{ledger.data && <span className="db-tag">{ledger.data.total.toLocaleString()} entries</span>}</div>
+      <div className="ledger-filters">
+        {([["all", "All"], ["credit", "Income"], ["withdrawal", "Withdrawals"]] as const).map(([kind, label]) => <button key={kind} className={filter.kind === kind && !filter.reason ? "active" : ""} onClick={() => choose({ kind })}>{label}</button>)}
+        <select value={filter.reason ?? ""} onChange={event => choose(event.target.value ? { kind: "credit", reason: event.target.value } : { kind: "all" })} aria-label="Income type">
+          <option value="">All income types</option>
+          {incomeStreams.map(stream => <option key={stream.reason} value={stream.reason}>{stream.name}</option>)}
+        </select>
+      </div>
+
+      {ledger.isError && <p className="db-warn">The ledger service isn't reachable right now. Your totals above are read directly from the contract.</p>}
+      {ledger.isLoading && <div className="src-skeleton"><i/><i/><i/></div>}
+      {ledger.data && ledger.data.entries.length === 0 && <p className="db-empty-note">No entries for this filter yet.</p>}
+      {ledger.data && ledger.data.entries.length > 0 && <div className="ledger-table-wrap"><table className="ledger-table">
+        <thead><tr><th>Date</th><th>Type</th><th className="num">Amount</th><th>Source</th><th>Transaction</th></tr></thead>
+        <tbody>{ledger.data.entries.map(entry => {
+          const credit = entry.kind === "credit";
+          const Icon = credit ? streamIcon(entry.reason ?? "") : ArrowUpRight;
+          return <tr key={`${entry.txHash}-${entry.logIndex}`} className={entry.kind}>
+            <td data-label="Date">{when(entry.blockNumber)}</td>
+            <td data-label="Type"><span className="ledger-type"><i><Icon size={13}/></i>{credit ? incomeName(entry.reason ?? "") : "Withdrawal"}</span></td>
+            <td data-label="Amount" className="num"><b>{credit ? "+" : "−"}{formatToken(BigInt(entry.amount))}</b> <em>USDT</em></td>
+            <td data-label="Source">{credit ? <SourceNote source={entry.source}/> : `You received ${formatToken(BigInt(entry.net ?? "0"))} · clubs ${formatToken(BigInt(entry.royalty ?? "0"))} · development ${formatToken(BigInt(entry.development ?? "0"))}`}</td>
+            <td data-label="Transaction"><a className="mono" href={`${explorerUrl}/tx/${entry.txHash}`} target="_blank" rel="noreferrer">{entry.txHash.slice(0, 10)}… <ExternalLink size={11}/></a></td>
+          </tr>;
+        })}</tbody>
+      </table></div>}
+
+      {ledger.data && pages > 1 && <div className="ledger-pages">
+        <button className="db-btn" disabled={filter.page <= 1} onClick={() => setFilter({ ...filter, page: filter.page - 1 })}><ChevronLeft size={14}/> Newer</button>
+        <span>Page {filter.page} of {pages}</span>
+        <button className="db-btn" disabled={filter.page >= pages} onClick={() => setFilter({ ...filter, page: filter.page + 1 })}>Older <ChevronRight size={14}/></button>
+      </div>}
+      <p className="db-foot-note">Entries come from the contract's RewardCredited and Claimed events. Withdrawals show the gross amount; the split shows what you received and what went to the star clubs and development.</p>
+    </div>
+  </div>;
 }
 
 function WorkingDistributionPanel({ directs, heldForUpgrade, rules }: { directs: number; heldForUpgrade?: bigint; rules: ProtocolRules }) {
@@ -1149,6 +1317,15 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
     contracts: kind === "nonworking" && protocolAddress ? (teamQuery.data ?? []).map(member => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "nonWorkingEntryCredit" as const, args: [member.address] as const })) : [],
     query: { enabled: kind === "nonworking" && Boolean(teamQuery.data?.length), refetchInterval: 30_000 },
   });
+  // Working: each team member's completed level; they have entered Level L once they completed Level L-1.
+  const workingReads = useReadContracts({
+    allowFailure: true,
+    contracts: kind === "working" && protocolAddress ? (teamQuery.data ?? []).map(member => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevel" as const, args: [member.address] as const })) : [],
+    query: { enabled: kind === "working" && Boolean(teamQuery.data?.length), refetchInterval: 30_000 },
+  });
+  const completedOf = new Map((teamQuery.data ?? []).map((member, index) => [member.address, Number(workingReads.data?.[index]?.result ?? 0)]));
+  /** Team members in Working Level L: directs for Level 1, members who upgraded into Level L above that. */
+  const enteredLevel = (level: number) => (teamQuery.data ?? []).filter(member => level === 1 ? member.depth === 1 : (completedOf.get(member.address) ?? 0) >= level - 1);
   const eligibleTeam = kind === "nonworking"
     ? (teamQuery.data ?? []).filter((_, index) => ((entryReads.data?.[index]?.result as bigint | undefined) ?? 0n) > 0n)
     : teamQuery.data ?? [];
@@ -1156,19 +1333,19 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   const teamInOrder = [...eligibleTeam].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
   const quote = quotes[selectedLevel - 1];
   const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
-  // Working levels hold the members at that referral depth (Level 1 = directs, Level 2 = their referrals, ...),
-  // with no limit, so nobody appears in two levels. The level's team requirement is the milestone.
+  // Working Level 1 holds your directs; Level L holds team members (15 levels deep) who upgraded into Level L
+  // by completing Level L-1. No limit per level; the level's team requirement is the milestone.
   const unlimited = kind === "working";
-  const depthMembers = teamInOrder.filter(member => member.depth === selectedLevel);
-  const holders = unlimited ? depthMembers : teamInOrder;
-  const filledCount = unlimited ? (teamQuery.data ? depthMembers.length : 0) : Math.min(teamValue, required);
+  const levelMembers = unlimited ? [...enteredLevel(selectedLevel)].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId))) : [];
+  const holders = unlimited ? levelMembers : teamInOrder;
+  const filledCount = unlimited ? (teamQuery.data ? levelMembers.length : 0) : Math.min(teamValue, required);
   const nodeCount = unlimited ? Math.max(required, filledCount) : required;
   const positions = Array.from({ length: nodeCount }, (_, index) => index + 1);
   const filledInLevel = Math.min(filledCount, required);
   // A level stays "In progress" once any of its positions is filled: levels keep accepting users, so none is shown as complete.
-  // Working: In progress once someone is at that referral depth. Non-Working: once the level's positions start filling.
+  // Working: In progress once a team member has upgraded into that level. Non-Working: once its positions start filling.
   const levelActive = (level: number) => currentLevel >= level
-    || (kind === "working" ? teamInOrder.some(member => member.depth === level) : teamValue >= level * 2 - 1);
+    || (kind === "working" ? enteredLevel(level).length > 0 : teamValue >= level * 2 - 1);
   // Non-Working levels are marked Complete once filled; Working levels stay In progress (unlimited users).
   const completes = kind === "nonworking";
   const levelState = (level: number) => completes && currentLevel >= level ? "reached" : levelActive(level) ? "current" : "locked";
@@ -1221,7 +1398,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         <span>{reached && completes ? "Complete · level filled" : reached ? "In progress · accepting unlimited users" : current ? "In progress · position awaiting activation" : "Locked · waiting for team members"}</span>
       </div>
       <div className="pool-focus-progress"><i style={{ width: `${filledInLevel / required * 100}%` }}/></div>
-      <p>{unlimited ? <>{selectedLevel === 1 ? "Level 1 holds all your direct referrals" : `Level ${selectedLevel} holds everyone ${selectedLevel} levels down your referral tree`}, with no limit. The first {required} complete the level's milestone.</> : <>Level {selectedLevel} needs {required} team members. Positions fill in the order members joined your team.</>}<br/>Every {name} level accepts unlimited users beyond the initial advancement milestone.</p>
+      <p>{unlimited ? <>{selectedLevel === 1 ? "Level 1 holds all your direct referrals" : `Level ${selectedLevel} holds your team members who upgraded into Level ${selectedLevel} (completed Level ${selectedLevel - 1})`}, with no limit. The first {required} complete the level's milestone.</> : <>Level {selectedLevel} needs {required} team members. Positions fill in the order members joined your team.</>}<br/>Every {name} level accepts unlimited users beyond the initial advancement milestone.</p>
     </div>
 
     <div className="pool-economics">

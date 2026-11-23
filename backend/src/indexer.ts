@@ -2,7 +2,7 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import { createPublicClient, http, zeroAddress } from "viem";
 import { bscTestnet } from "viem/chains";
 import { config } from "./config.js";
-import { batchEnd, claimed, decodeReason, finalBlock, participantRegistered, participationAllocated, rewardCredited } from "./events.js";
+import { batchEnd, claimed, decodeReason, finalBlock, participantRegistered, participationAllocated, poolIncomeQueued, rewardCredited } from "./events.js";
 
 const prisma = new PrismaClient();
 const client = createPublicClient({ chain: bscTestnet, transport: http(config.rpcUrl) });
@@ -19,17 +19,19 @@ async function reconcileReorg() {
       prisma.allocation.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
       prisma.rewardCredit.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
       prisma.claim.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
+      prisma.poolQueue.deleteMany({ where: { blockNumber: { gte: checkpoint.blockNumber } } }),
       prisma.blockCheckpoint.delete({ where: { blockNumber: checkpoint.blockNumber } }),
     ]);
   }
 }
 
 async function processRange(fromBlock: bigint, toBlock: bigint) {
-  const [registrations, allocations, credits, claims, endBlock] = await Promise.all([
+  const [registrations, allocations, credits, claims, queued, endBlock] = await Promise.all([
     client.getLogs({ address: config.protocol, event: participantRegistered, fromBlock, toBlock }),
     client.getLogs({ address: config.protocol, event: participationAllocated, fromBlock, toBlock }),
     client.getLogs({ address: config.protocol, event: rewardCredited, fromBlock, toBlock }),
     client.getLogs({ address: config.protocol, event: claimed, fromBlock, toBlock }),
+    client.getLogs({ address: config.protocol, event: poolIncomeQueued, fromBlock, toBlock }),
     client.getBlock({ blockNumber: toBlock }),
   ]);
 
@@ -110,12 +112,48 @@ async function processRange(fromBlock: bigint, toBlock: bigint) {
         update: {},
       });
     }
+    await storePoolQueue(tx, queued);
     await tx.blockCheckpoint.upsert({
       where: { blockNumber: toBlock },
       create: { blockNumber: toBlock, blockHash: endBlock.hash },
       update: { blockHash: endBlock.hash },
     });
   });
+}
+
+type QueueLog = Awaited<ReturnType<typeof fetchPoolQueue>>[number];
+function fetchPoolQueue(fromBlock: bigint, toBlock: bigint) {
+  return client.getLogs({ address: config.protocol, event: poolIncomeQueued, fromBlock, toBlock });
+}
+async function storePoolQueue(tx: Prisma.TransactionClient, logs: QueueLog[]) {
+  for (const log of logs) {
+    const { account, pool, level, amount } = log.args;
+    if (!account || pool === undefined || level === undefined || amount === undefined || log.logIndex === null) continue;
+    await tx.poolQueue.upsert({
+      where: { txHash_logIndex: { txHash: log.transactionHash, logIndex: log.logIndex } },
+      create: {
+        account: account.toLowerCase(), pool, level,
+        amount: new Prisma.Decimal(amount.toString()),
+        blockNumber: log.blockNumber, txHash: log.transactionHash, logIndex: log.logIndex,
+      },
+      update: {},
+    });
+  }
+}
+
+/** One-off: load PoolIncomeQueued events from the start block up to the last indexed block. Idempotent. */
+export async function backfillPoolQueue() {
+  const checkpoint = await prisma.blockCheckpoint.findFirst({ orderBy: { blockNumber: "desc" } });
+  if (!checkpoint) return 0;
+  let stored = 0;
+  for (let cursor = config.startBlock; cursor <= checkpoint.blockNumber;) {
+    const end = batchEnd(cursor, checkpoint.blockNumber, config.batchSize);
+    const logs = await fetchPoolQueue(cursor, end);
+    await prisma.$transaction(async (tx) => storePoolQueue(tx, logs));
+    stored += logs.length;
+    cursor = end + 1n;
+  }
+  return stored;
 }
 
 export async function syncOnce() {
@@ -131,6 +169,11 @@ export async function syncOnce() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.argv.includes("--backfill-pool-queue")) {
+    const stored = await backfillPoolQueue();
+    console.log(`Backfilled ${stored} PoolIncomeQueued events`);
+    process.exit(0);
+  }
   const watch = process.argv.includes("--watch");
   const intervalMs = Number(process.env.INDEXER_INTERVAL_MS ?? 15_000);
   const run = async () => {

@@ -157,9 +157,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @dev Per Single-Leg level, the next position to check for reaching that level's team size.
     mapping(uint8 => uint64) internal lineCursor;
 
+    // ---- Appended in the Working upgrade-fill upgrade (uses 1 gap slot). ----
+    /// @notice Team members (15 levels deep) who have entered each Working level: everyone enters Level 1 by
+    /// joining and enters Level L+1 by completing Level L. Level L (L >= 2) completes with 2×L of them.
+    mapping(address => mapping(uint8 => uint64)) public workingEnteredCount;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[28] private __gap;
+    uint256[27] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -306,21 +311,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 debt = clubRewardDebt[account];
         return accumulated > debt ? (accumulated - debt) / ACC : 0;
     }
-    /// @notice Enrols existing members (by id range) into the 1–4 Star club matching their rank.
-    /// Idempotent and permissionless; run once over all ids after upgrading a live proxy.
-    function syncClubMembers(uint64 fromId, uint64 toId) external nonReentrant {
-        if (toId > memberCount) toId = memberCount;
-        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _syncClub(memberById[id]);
-    }
     /// @notice Team size at each of the 10 sponsor levels below `account` (index 0 = level 1 = directs).
     function getLevelTeamCounts(address account) external view returns (uint64[10] memory counts) {
         for (uint8 level = 1; level <= MAX_UPLINE; ++level) counts[level - 1] = levelTeamCount[account][level];
-    }
-    /// @notice Adds members registered before per-level counting to their uplines' counts.
-    /// Idempotent and permissionless; run once over all ids after upgrading a live proxy.
-    function syncLevelTeam(uint64 fromId, uint64 toId) external nonReentrant {
-        if (toId > memberCount) toId = memberCount;
-        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordLevelTeam(memberById[id]);
     }
     /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
     function syncRank(address account) external nonReentrant {
@@ -387,12 +380,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 end = offset + limit > list.length ? list.length : offset + limit;
         page = new address[](end - offset);
         for (uint256 i = offset; i < end; ++i) page[i - offset] = list[i];
-    }
-    /// @notice Adds members registered before on-chain referral lists to their sponsor's list.
-    /// Idempotent and permissionless; run once over all ids, in id order, after upgrading.
-    function syncDirectList(uint64 fromId, uint64 toId) external nonReentrant {
-        if (toId > memberCount) toId = memberCount;
-        for (uint64 id = fromId == 0 ? 1 : fromId; id <= toId; ++id) _recordDirect(memberById[id]);
     }
     function workingLevelQuote(uint8 level)
         external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
@@ -471,22 +458,36 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         address upline = participants[member].sponsor;
         for (uint8 level = 1; level <= MAX_WORKING_LEVEL && upline != address(0); ++level) {
             levelTeamCount[upline][level]++;
-            _advanceWorking(upline);
+            if (level == 1) _advanceWorking(upline); // Level 1 = 2 directs
             upline = participants[upline].sponsor;
         }
     }
 
     /// @dev Working level L is reached, in order, once the member has 2×L members at referral depth L.
     /// Each level queues its Working Pool table income: 80% achiever, 10% U1, 10% across U2–U9.
+    /// @dev Working Level 1 completes with 2 directs; Level L (L >= 2) with 2×L team members who have entered
+    /// Level L by upgrading. Completing a level queues its table income and enters the member into the next
+    /// level, filling a position for each of their uplines.
     function _advanceWorking(address account) private {
         uint8 level = workingLevel[account];
-        while (level < MAX_WORKING_LEVEL && levelTeamCount[account][level + 1] >= uint64(level + 1) * 2) {
-            ++level;
+        while (level < MAX_WORKING_LEVEL) {
+            uint8 next = level + 1;
+            uint64 filled = next == 1 ? levelTeamCount[account][1] : workingEnteredCount[account][next];
+            if (filled < uint64(next) * 2) break;
+            level = next;
+            workingLevel[account] = level;
             _queueWorkingLevel(account, level);
+            emit LevelAdvanced(account, level, nonWorkingLevel[account]);
+            if (level < MAX_WORKING_LEVEL) _enterWorkingLevel(account, level + 1);
         }
-        if (level == workingLevel[account]) return;
-        workingLevel[account] = level;
-        emit LevelAdvanced(account, level, nonWorkingLevel[account]);
+    }
+    function _enterWorkingLevel(address member, uint8 level) private {
+        address upline = participants[member].sponsor;
+        for (uint8 depth; depth < MAX_WORKING_LEVEL && upline != address(0); ++depth) {
+            workingEnteredCount[upline][level]++;
+            _advanceWorking(upline);
+            upline = participants[upline].sponsor;
+        }
     }
 
     function _recordDirect(address member) private {

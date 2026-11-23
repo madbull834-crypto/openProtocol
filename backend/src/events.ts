@@ -19,6 +19,9 @@ export function batchEnd(from: bigint, target: bigint, batchSize: bigint) {
 export const rewardCredited = parseAbiItem(
   "event RewardCredited(address indexed account, uint256 amount, bytes32 indexed reason)",
 );
+export const poolIncomeQueued = parseAbiItem(
+  "event PoolIncomeQueued(address indexed account, uint8 indexed pool, uint8 level, uint256 amount)",
+);
 export const claimed = parseAbiItem(
   "event Claimed(address indexed account, uint256 gross, uint256 net, uint256 royalty, uint256 development)",
 );

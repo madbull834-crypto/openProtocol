@@ -1079,3 +1079,52 @@ i.dev{background:linear-gradient(90deg,#1477d6,var(--blue))}
 .reentry-view .db-summary .primary .db-sum-icon{color:#43e83a}
 .reentry-view .sl-team-list li strong{color:#77dfc5;font-size:12px;white-space:nowrap}
 .reentry-progress{margin-top:4px}
+/* Income Ledger tab */
+.ledger-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 14px}
+.ledger-filters button{padding:8px 14px;border:1px solid rgba(52,95,142,.45);border-radius:8px;background:#040b15;color:#9fb3c8;font-size:12px;font-weight:700;cursor:pointer}
+.ledger-filters button.active{border-color:#38c8f8;background:linear-gradient(110deg,rgba(47,123,255,.3),rgba(56,200,248,.15));color:#fff}
+.ledger-filters select{margin-left:auto;padding:8px 12px;border:1px solid rgba(52,95,142,.45);border-radius:8px;background:#040b15;color:#d5dce8;font-size:12px}
+.ledger-table-wrap{overflow-x:auto;border:1px solid rgba(52,95,142,.35);border-radius:12px}
+.ledger-table{width:100%;min-width:760px;border-collapse:collapse}
+.ledger-table th{padding:12px 14px;background:linear-gradient(180deg,#0d2a5e,#071733);color:#cfe3ff;font-size:11px;letter-spacing:.08em;text-align:left;text-transform:uppercase}
+.ledger-table td{padding:12px 14px;border-top:1px solid rgba(52,95,142,.25);color:#d5dce8;font-size:12.5px;vertical-align:middle}
+.ledger-table .num{text-align:right;white-space:nowrap}.ledger-table td em{color:#7f95b2;font-size:10.5px;font-style:normal}
+.ledger-table tr.credit td.num b{color:#5ee0a6}.ledger-table tr.withdrawal td.num b{color:#ff9a8a}
+.ledger-table td:first-child{white-space:nowrap;color:#9fb3c8}
+.ledger-table a{color:#74cfff;white-space:nowrap}
+.ledger-type{display:inline-flex;align-items:center;gap:8px;font-weight:700}.ledger-type i{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:rgba(47,123,255,.18);color:#9fd8ff}
+.ledger-table tr.withdrawal .ledger-type i{background:rgba(255,107,97,.15);color:#ff9a8a}
+.ledger-pages{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;color:#9fb3c8;font-size:12px}
+@media (max-width:720px){.ledger-filters select{margin-left:0;width:100%}}
+/* Earnings: every payment with its source */
+.src-list li.src-item{cursor:pointer;transition:background .15s}.src-list li.src-item:hover{background:rgba(255,255,255,.025)}
+.src-list li.src-item.static{cursor:default}
+.src-chevron{margin-left:6px;vertical-align:-2px;transition:transform .2s}.src-item.open .src-chevron{transform:rotate(90deg)}
+.src-entries{margin-top:12px;padding:10px 12px;border:1px solid rgba(52,95,142,.35);border-radius:10px;background:#040b15;cursor:default}
+.src-entries ul{display:grid;gap:8px;list-style:none;margin:0;padding:0}
+.src-entries li{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:8px 4px;border-bottom:1px solid rgba(52,95,142,.18)}
+.src-entries li:last-child{border-bottom:0}
+.src-entries li>b{color:#5ee0a6;font-size:13px;white-space:nowrap}.src-entries li>b em{color:#7f95b2;font-size:10px;font-style:normal}
+.src-tx{color:#74cfff}
+.src-entries .db-text-btn{margin-top:8px}
+.src-note{display:grid;gap:2px;font-size:12px;color:#c3d0e0;line-height:1.4}
+.src-note a{color:#74cfff;font-size:11px;width:max-content}
+.src-origin{margin-bottom:12px;padding-bottom:10px;border-bottom:1px dashed rgba(52,95,142,.45)}
+.src-origin>small,.src-sub{display:block;margin:2px 4px 8px;color:#7ee787;font-size:10.5px;font-weight:800;letter-spacing:.12em}
+.src-sub{color:#74cfff}
+.src-origin ul{display:grid;gap:6px;list-style:none;margin:0;padding:0}
+.src-origin li{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:7px 4px;border-bottom:1px solid rgba(52,95,142,.18)}
+.src-origin li>b{color:#9fd8ff;font-size:13px;white-space:nowrap}.src-origin li>b.own{color:#5ee0a6}.src-origin li>b em{color:#7f95b2;font-size:10px;font-style:normal}
+/* My Team card */
+.my-team-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:16px 0 14px}
+.my-team-levels{display:flex;flex-wrap:wrap;gap:6px}
+.my-team-levels button{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid rgba(52,95,142,.45);border-radius:8px;background:#040b15;color:#9fb3c8;font-size:12px;font-weight:700;cursor:pointer}
+.my-team-levels button em{padding:1px 6px;border-radius:5px;background:rgba(255,255,255,.07);color:#cfe3ff;font-size:10px;font-style:normal}
+.my-team-levels button.active{border-color:#38c8f8;background:linear-gradient(110deg,rgba(47,123,255,.3),rgba(56,200,248,.15));color:#fff}
+.my-team-tools input{margin-left:auto;min-width:220px;padding:8px 12px;border:1px solid rgba(52,95,142,.45);border-radius:8px;background:#040b15;color:#d5dce8;font-size:12px}
+.my-team-member{display:grid;gap:2px}.my-team-member b{color:#fff;font-size:13px}.my-team-member a{font-size:11px}
+.my-team-depth{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap}
+.my-team-depth.d1{background:rgba(46,196,160,.14);color:#77dfc5}.my-team-depth.d2{background:rgba(47,123,255,.16);color:#9fd8ff}
+.my-team-depth.d3{background:rgba(155,108,255,.16);color:#c9b5ff}.my-team-depth.d4{background:rgba(240,199,94,.14);color:#ffd98a}
+.my-team-table{min-width:820px}
+@media (max-width:720px){.my-team-tools input{margin-left:0;width:100%}}

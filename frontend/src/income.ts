@@ -45,6 +45,68 @@ export const incomeStreams = [
 
 export const incomeName = (reason: string) => incomeStreams.find((s) => s.reason === reason)?.name ?? "Other reward";
 
+export type CreditSource = { member?: { address: Address; memberId: string }; depth?: number; note: string };
+export type LedgerEntry = {
+  kind: "credit" | "withdrawal";
+  /** Where a credit came from (who joined, which pool or club). */
+  source: CreditSource | null;
+  reason: string | null;
+  amount: string;
+  net: string | null;
+  royalty: string | null;
+  development: string | null;
+  blockNumber: string;
+  txHash: string;
+  logIndex: number;
+};
+export type LedgerPage = { page: number; pageSize: number; total: number; entries: LedgerEntry[] };
+export type LedgerFilter = { kind: "all" | "credit" | "withdrawal"; reason?: string; page: number };
+
+/** Every income credit and withdrawal (from the contract's events, via the indexer), paged. */
+export function useLedger(address: Address | undefined, filter: LedgerFilter, pageSize = 25) {
+  return useQuery({
+    queryKey: ["ledger", address?.toLowerCase(), filter.kind, filter.reason ?? "", filter.page, pageSize],
+    enabled: Boolean(address),
+    refetchInterval: 30_000,
+    retry: 1,
+    placeholderData: previous => previous,
+    queryFn: async (): Promise<LedgerPage> => {
+      const params = new URLSearchParams({ page: String(filter.page), pageSize: String(pageSize) });
+      if (filter.reason) params.set("reason", filter.reason);
+      else if (filter.kind !== "all") params.set("kind", filter.kind);
+      const response = await fetch(`${apiBaseUrl}/api/participants/${address}/ledger?${params}`);
+      if (!response.ok) throw new Error(`Ledger service returned ${response.status}`);
+      return await response.json() as LedgerPage;
+    },
+  });
+}
+
+export type PoolSource = {
+  own: boolean;
+  member: { address: Address; memberId: string | null; depth: number | null } | null;
+  pool: number;
+  level: number;
+  levelAmount: string;
+  share: string;
+  note: string;
+  blockNumber: string;
+  txHash: string;
+};
+/** Pool levels behind an account's pool income: its own levels and its share of its team's levels. */
+export function usePoolSources(address: Address | undefined, pool: number | undefined) {
+  return useQuery({
+    queryKey: ["pool-sources", address?.toLowerCase(), pool],
+    enabled: Boolean(address && pool),
+    refetchInterval: 30_000,
+    retry: 1,
+    queryFn: async (): Promise<PoolSource[]> => {
+      const response = await fetch(`${apiBaseUrl}/api/participants/${address}/pool-sources?pool=${pool}`);
+      if (!response.ok) throw new Error(`Pool sources service returned ${response.status}`);
+      return (await response.json() as { items: PoolSource[] }).items;
+    },
+  });
+}
+
 /** Lifetime income history from the indexer. `isError` means the history service is unreachable. */
 export function useIncomeHistory(address?: Address) {
   return useQuery({
