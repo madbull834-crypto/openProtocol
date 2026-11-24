@@ -26,7 +26,7 @@ const key = process.env.DEPLOYER_PRIVATE_KEY;
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.28",
-    settings: { optimizer: { enabled: true, runs: 500 }, viaIR: true },
+    settings: { optimizer: { enabled: true, runs: 50 }, viaIR: true },
   },
   networks: {
     bscTestnet: {

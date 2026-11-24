@@ -364,25 +364,28 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("enters every member into Non-Working Level 1 with their 5 USDT, independent of Single-Leg", async function () {
+  it("fills Non-Working first come, first served across the whole platform", async function () {
     const { genesis, alice, bob, protocol, token } = await fixture();
+    // Genesis waits first in the Level 1 queue; each new member fills the front member, whoever referred them.
     await protocol.connect(alice).register(genesis.address);
     expect(await protocol.matrixFilled(genesis.address, 17)).to.equal(1); // Non-Working Level 1 key = 1 + 16
-    const [a1] = await addMembers(protocol, token, alice.address, 1); // hosted by alice, not genesis
-    expect(await protocol.matrixFilled(alice.address, 17)).to.equal(1);
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
-    await protocol.connect(bob).register(genesis.address);
-    // Genesis Level 1 complete: 2 × 5 = 10 turnover, 5 upgrade, 80% of 5 = 4 USDT.
+    const [a1] = await addMembers(protocol, token, alice.address, 1);
+    // a1 was referred by alice, but genesis is first in line: genesis completes Level 1 (80% of 5 = 4 USDT).
     expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(1);
-    expect(await protocol.singleLegLevel(genesis.address)).to.equal(0); // Single-Leg is unrelated
     expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_000_000n);
-    // alice completes Level 1 too: her upgrade enters genesis's Level 2, and genesis gets U1 10% of 5.
-    await addMembers(protocol, token, alice.address, 1);
+    expect(await protocol.matrixFilled(alice.address, 17)).to.equal(0);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(0); // Single-Leg is unrelated
+    // bob (referred by genesis) now fills alice, who is next in line.
+    await protocol.connect(bob).register(genesis.address);
+    expect(await protocol.matrixFilled(alice.address, 17)).to.equal(1);
+    await addMembers(protocol, token, a1.address, 1);
+    // alice completes Level 1; her 5 USDT upgrade fills genesis, first in the Level 2 queue.
+    expect(await protocol.nonWorkingLevel(alice.address)).to.equal(1);
     expect(await protocol.matrixFilled(genesis.address, 18)).to.equal(1);
-    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_500_000n);
     expect(await protocol.nonWorkingReserve()).to.equal(20_000_000n); // 4 tickets × 5, nothing paid out yet
-    void a1;
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+    // The one-time queue migration is owner-only.
+    await expect(protocol.connect(alice).seedNonWorkingQueue([alice.address], 3)).to.be.reverted;
   });
 
   it("keeps every queued Working and Non-Working payout backed by its reserve", async function () {
@@ -438,7 +441,7 @@ describe("OpenProtocolParticipation", function () {
       .to.be.revertedWithCustomError(protocol, "SponsorNotRegistered");
     await token.connect(bob).approve(await protocol.getAddress(), 24_000_000n);
     await expect(protocol.connect(bob).register(genesis.address)).to.be.reverted;
-    expect(await protocol.isRegistered(bob.address)).to.equal(false);
+    expect((await protocol.getParticipant(bob.address)).id).to.equal(0);
   });
 
   it("rejects fee-on-transfer tokens without partial state", async function () {
@@ -452,7 +455,7 @@ describe("OpenProtocolParticipation", function () {
     await token.connect(alice).approve(await protocol.getAddress(), 30_000_000n);
     await expect(protocol.connect(alice).register(genesis.address))
       .to.be.revertedWithCustomError(protocol, "IncorrectTokenReceipt");
-    expect(await protocol.isRegistered(alice.address)).to.equal(false);
+    expect((await protocol.getParticipant(alice.address)).id).to.equal(0);
   });
 
   it("allows only the owner to upgrade while preserving proxy state", async function () {

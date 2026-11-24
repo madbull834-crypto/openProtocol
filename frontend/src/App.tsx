@@ -703,7 +703,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const poolInfo = {
     single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
     working: { name: "Working", note: "Each level fills with entries from your team", tone: "green", Icon: Layers, level: working ?? 0, max: 15 },
-    nonWorking: { name: "Non-Working", note: "Each level fills with entries from your team", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
+    nonWorking: { name: "Non-Working", note: "Global queue: first come, first served", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
   } as const;
   const visiblePools = teamIncome.pools;
   const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 5);
@@ -891,7 +891,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-lifecycle">
           <article><span className="db-icon"><Zap size={16}/></span><small>Single-Leg entries</small><b>{singleLegEntries?.toString() ?? "—"}</b><em>{singleLegReentries?.toString() ?? "0"} automatic re-entry at Level 3</em></article>
           <article><span className="db-icon"><Network size={16}/></span><small>Non-working re-entry</small><b>{nonWorkingReentries?.toString() ?? "—"}</b><em>One cycle per 30 qualified team members</em></article>
-          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working level</small><b>{nonWorkingShown} <i>/ 15</i></b><em>Entered on joining with your 5 USDT · levels fill with your team's entries</em></article>
+          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working level</small><b>{nonWorkingShown} <i>/ 15</i></b><em>Entered on joining with your 5 USDT · global first-come-first-served queue</em></article>
           <article><span className="db-icon"><ShieldCheck size={16}/></span><small>Pool earning cap</small><b>{capLabel}</b><em>{teamIncome.unlimited ? "No pool cap at this rank" : `${formatToken(teamIncome.capLeft)} USDT capacity remaining`}</em></article>
         </div>
 
@@ -1404,12 +1404,14 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         : fillReads.isError && <p className="pool-wallet-note">Couldn't read your matrix from the contract right now.</p>}
       <div className="pool-level-copy">
         <b>{unlimited ? `${filledCount} direct ${filledCount === 1 ? "member" : "members"} · Level 1 completes with your 2nd direct` : `${filledInLevel} of ${required} positions filled`}</b>
-        <span>{reached ? "Complete · level paid and upgraded" : selectedLevel === upgradedInto ? `Unlocked · filling its ${required} positions with entries from your team` : `Locked · complete Level ${selectedLevel - 1} first`}</span>
+        <span>{reached ? "Complete · level paid and upgraded" : selectedLevel === upgradedInto ? `Unlocked · filling its ${required} positions ${kind === "nonworking" ? "from the global queue" : "with entries from your team"}` : `Locked · complete Level ${selectedLevel - 1} first`}</span>
       </div>
       <div className="pool-focus-progress"><i style={{ width: `${filledInLevel / required * 100}%` }}/></div>
       <p>{unlimited
         ? <>Level 1 holds your direct referrals. Your 1st direct pays you; your 2nd direct's ID amount is your auto-upgrade into Level 2; every direct after that pays you again.</>
-        : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
+        : kind === "nonworking"
+          ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
+          : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
     </div>
 
     <div className="pool-economics">

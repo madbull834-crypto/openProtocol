@@ -125,7 +125,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Team members at each sponsor level below an account: level 1 = directs ... level 15.
     mapping(address => mapping(uint8 => uint64)) public levelTeamCount;
     /// @notice Whether a member has been added to their uplines' level counts (set on register or by sync).
-    mapping(address => bool) public levelTeamRecorded;
+    mapping(address => bool) internal levelTeamRecorded;
 
     // ---- Appended in the on-chain ledger upgrade (uses 6 gap slots). ----
     /// @notice Lifetime income credited to an account, per reason code (credits from this upgrade onward).
@@ -135,7 +135,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     mapping(address => uint256) public totalWithdrawnGross;
     mapping(address => uint64) public withdrawCount;
     mapping(address => address[]) private directList;
-    mapping(address => bool) public directListed;
+    mapping(address => bool) internal directListed;
 
     // ---- Appended in the held-royalty upgrade (uses 2 gap slots). ----
     /// @notice Club royalty earned while the member has fewer directs than clubClaimDirects(rank).
@@ -177,9 +177,15 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @dev Per level L (>= 2): positions before lineCursor[L] that have reached Level L-1.
     mapping(uint8 => uint64) internal singleLegBehind;
 
+    // ---- Appended in the global Non-Working upgrade (uses 2 gap slots). ----
+    /// @notice Global first-come-first-served queue per Non-Working level: members waiting for positions.
+    mapping(uint8 => mapping(uint64 => address)) internal nonWorkingQueue;
+    /// @notice Per level: (head << 64) | tail of `nonWorkingQueue`. The head member receives the next entry.
+    mapping(uint8 => uint128) internal nonWorkingQueueBounds;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[23] private __gap;
+    uint256[21] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -236,6 +242,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         memberCount = 1;
         participants[genesisParticipant_] = Participant(1, 0, address(0), uint64(block.timestamp));
         starRank[genesisParticipant_] = 1;
+        _enterNonWorking(genesisParticipant_, 1);
         _syncClub(genesisParticipant_);
         singleLegEntries[genesisParticipant_] = 1;
         memberById[1] = genesisParticipant_;
@@ -284,7 +291,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _allocateWorking(sponsor);
         singleLegReserve += nonWorkingAllocation;
         nonWorkingReserve += nonWorkingTicketAllocation;
-        _enterMatrix(msg.sender, false, 1);
+        _enterNonWorking(msg.sender, 1);
         superstarReserve += clubAllocation;
         emit ParticipantRegistered(msg.sender, sponsor, newId, uint64(block.timestamp));
         emit RankAdvanced(msg.sender, 0, 1);
@@ -341,11 +348,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Team size at each of the 10 sponsor levels below `account` (index 0 = level 1 = directs).
     function getLevelTeamCounts(address account) external view returns (uint64[10] memory counts) {
         for (uint8 level = 1; level <= MAX_UPLINE; ++level) counts[level - 1] = levelTeamCount[account][level];
-    }
-    /// @notice Re-checks `account`'s star rank against `rankRule`. Permissionless.
-    function syncRank(address account) external nonReentrant {
-        if (participants[account].id == 0) revert SponsorNotRegistered(account);
-        _updateRank(account);
     }
     /// @notice Re-checks all of `account`'s Single-Leg positions. Permissionless.
     function syncSingleLeg(address account) external nonReentrant {
@@ -456,7 +458,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return participants[account].directCount >= clubClaimDirects(starRank[account]);
     }
     function getParticipant(address account) external view returns (Participant memory) { return participants[account]; }
-    function isRegistered(address account) external view returns (bool) { return participants[account].id != 0; }
     function isActive(address account) external view returns (bool) { return participants[account].directCount >= 2; }
     function currentWeek() public view returns (uint256) { return block.timestamp / WEEK; }
     function accountingInvariantHolds() external view returns (bool) {
@@ -492,6 +493,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// fills one position in the matrix of the nearest upline currently filling that level; with no such
     /// upline the entry's ID amount stays in the reserve. Every payout is backed by entries already paid in.
     function _enterMatrix(address member, bool working, uint8 level) private {
+        if (!working) return _enterNonWorking(member, level);
         address host = participants[member].sponsor;
         for (uint8 depth; depth < MAX_WORKING_LEVEL && host != address(0); ++depth) {
             if ((working ? workingLevel[host] : nonWorkingLevel[host]) + 1 == level) {
@@ -502,6 +504,33 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             host = participants[host].sponsor;
         }
         emit LevelEntered(member, address(0), working, level);
+    }
+
+    /// @dev Non-Working is first come, first served across the whole platform: an entry into `level` fills
+    /// the member at the front of that level's queue (whoever referred them), then joins the back of it.
+    /// A full matrix pays out and its owner leaves the queue; with an empty queue the entry stays in the reserve.
+    function _enterNonWorking(address member, uint8 level) private {
+        uint128 bounds = nonWorkingQueueBounds[level];
+        uint64 head = uint64(bounds >> 64);
+        uint64 tail = uint64(bounds);
+        address host;
+        if (head < tail) {
+            host = nonWorkingQueue[level][head];
+            if (++matrixFilled[host][level + 16] == level * 2) ++head;
+        }
+        nonWorkingQueue[level][tail] = member;
+        nonWorkingQueueBounds[level] = (uint128(head) << 64) | (tail + 1);
+        emit LevelEntered(member, host, false, level);
+        if (host != address(0) && matrixFilled[host][level + 16] == level * 2) _completeLevel(host, false, level);
+    }
+
+    /// @notice One-time migration for a live proxy: appends existing members, in order, to a Non-Working
+    /// level's queue without filling anyone (they joined before the global queue existed).
+    function seedNonWorkingQueue(address[] calldata members, uint8 level) external onlyOwner {
+        uint128 bounds = nonWorkingQueueBounds[level];
+        uint64 tail = uint64(bounds);
+        for (uint256 i; i < members.length; ++i) nonWorkingQueue[level][tail++] = members[i];
+        nonWorkingQueueBounds[level] = (bounds >> 64 << 64) | tail;
     }
 
     /// @dev Completing a level: its turnover (2 × L × ID) minus the auto-upgrade is split 80% / 10% U1 /
