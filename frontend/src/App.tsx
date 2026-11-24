@@ -9,7 +9,7 @@ import { chainId as requiredChainId, deploymentError, explorerUrl, genesisSponso
 import { erc20Abi, mockUsdtAbi, protocolAbi } from "./contracts/abi";
 import { useUi } from "./store/ui";
 import { formatToken, shortAddress } from "./utils/format";
-import { incomeName, incomeStreams, useIncomeHistory, useLedger, usePoolSources, type CreditSource, type LedgerFilter } from "./income";
+import { incomeName, incomeStreams, useClubFunds, useIncomeHistory, useLedger, usePoolSources, type CreditSource, type LedgerFilter } from "./income";
 import { useOnchainDirects, useOnchainIncome, useOnchainTeam, useProtocolRules, useSingleLegLine, type ProtocolRules, type RankRule } from "./onchain";
 import { Landing } from "./Landing";
 import { ReferralJoinPrompt, ReferralShare } from "./ReferralShare";
@@ -575,6 +575,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "heldRoyalty", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "royaltyClaimable", args: [account] },
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingReserve" },
+      ...[1, 2, 3, 4].map(rank => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "accClubRewardPerMember" as const, args: [rank] as const })),
+      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "accFiveStarRewardPerMember" },
     ] : [],
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
@@ -633,6 +635,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const nonWorkingShown = nonWorking ?? 0;
   const heldRoyalty = rewards.data?.[36]?.result as bigint | undefined;
   const royaltyClaimable = rewards.data?.[37]?.result as boolean | undefined;
+  const accClub = [39, 40, 41, 42].map(i => rewards.data?.[i]?.result as bigint | undefined);
+  const accFiveStar = rewards.data?.[43]?.result as bigint | undefined;
+  const clubFunds = useClubFunds();
   const pendingRoyalty = pendingFiveStar === undefined && pendingClub === undefined ? undefined : (pendingFiveStar ?? 0n) + (pendingClub ?? 0n) + (heldRoyalty ?? 0n);
   useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) { void history.refetch(); void indexedHistory.refetch(); } }, [claimReceipt.isSuccess, settleReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
   void creditedIncome;
@@ -840,16 +845,18 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           const done = level >= 10;
           const [nextMembers, nextDirects] = SINGLE_LEG_TABLE[Math.min(level, 9)];
           const prevMembers = level === 0 ? 0 : SINGLE_LEG_TABLE[level - 1][0];
-          // Level 3 counts only team members who crossed Single-Leg Level 2 (contract `singleLegTeamFor`).
-          const counted = slTeam ?? 0;
-          const progress = done ? 100 : Math.min(100, Math.max(0, (counted - prevMembers) / (nextMembers - prevMembers) * 100));
+          // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
+          void prevMembers;
+          const met = level === 0 ? (slTeam ?? 0) >= nextMembers : Boolean(singleLegLine.data?.metAt[level + 1]);
+          const counted = level === 0 ? (slTeam ?? 0) : met ? nextMembers : 0;
+          const progress = done ? 100 : Math.min(100, counted / nextMembers * 100);
           return <div className="db-card single-leg-card">
             <div className="db-section-head"><div><small>SINGLE-LEG POOL</small><h3>Single-Leg team</h3></div><button className="db-text-btn" onClick={() => setTab("network")}>View <ChevronRight size={14}/></button></div>
             <div className="single-leg-body">
               <div className="team-total sl"><span className="db-icon"><TrendingUp size={18}/></span><small>Single-Leg team</small><b>{slTeam === undefined ? "—" : slTeam.toLocaleString()}</b><em>Everyone who joined after you · position #{singleLegLine.data?.primary ?? "—"}</em></div>
               <div className="single-leg-stats">
                 <div><small>Current level</small><b>{level} <i>/ 10</i></b></div>
-                <div><small>Next level needs</small><b>{done ? "—" : `${nextMembers.toLocaleString()} team`}</b><span>{done ? "All levels complete" : `${Math.max(0, nextMembers - counted).toLocaleString()} more members`}</span></div>
+                <div><small>Next level needs</small><b>{done ? "—" : level === 0 ? `${nextMembers.toLocaleString()} after you` : `${nextMembers.toLocaleString()} at Level ${level}+`}</b><span>{done ? "All levels complete" : level === 0 ? `${Math.max(0, nextMembers - counted).toLocaleString()} more people` : met ? "Members condition met" : `People after you must reach Level ${level}`}</span></div>
                 <div><small>Directs required</small><b>{done ? "—" : nextDirects}</b><span>{done ? "" : directCount >= nextDirects ? "Requirement met" : `You have ${directCount}`}</span></div>
               </div>
             </div>
@@ -1001,11 +1008,24 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           <div className="club-grid">{royaltyClubs.filter(club => club.rank !== null).map(club => {
             const rank = club.rank as number;
             const state = rank === currentRank ? "current" : rank < currentRank ? "reached" : "locked";
+            const fund = clubFunds.data?.find(item => item.rank === rank);
+            // Per-member share credited to the club so far (accumulator / 1e24); 5 Star is per weight.
+            const perMember = (rank === 5 ? accFiveStar : accClub[rank - 1]) ?? 0n;
             return <div key={club.name} className={`club-tier ${state}`}>
               <div className="club-tier-head"><span className="club-tier-icon">{rank === 5 ? <Crown size={15}/> : <Award size={15}/>}</span>{state === "current" ? <em>Your club</em> : state === "reached" ? <Check size={14}/> : null}</div>
               <b>{club.name}</b>
               <small>{rankRequirementText(rank, rules.ranks[rank])}</small>
               <ul><li><span>Income cap</span><strong>{rankCapText(rules.ranks[rank])}</strong></li><li><span>Royalty pool</span><strong>{pct(rules.royaltyBps / 5n)} royalty</strong></li><li><span>Claim with</span><strong>{rules.clubClaimDirects[rank] === 0 ? "No condition" : `${rules.clubClaimDirects[rank]} directs`}</strong></li><li><span>Members</span><strong>{clubMembers[rank - 1]?.toLocaleString() ?? "—"}</strong></li></ul>
+              <div className="club-fund">
+                <div><small>Total fund received</small><b>{fund ? formatToken(BigInt(fund.received)) : "—"} <em>USDT</em></b></div>
+                <div><small>{rank === 5 ? "Per weight so far" : "Per member so far"}</small><b>{formatToken(perMember / 10n ** 24n)} <em>USDT</em></b></div>
+                {fund && BigInt(fund.toVault) > 0n && <span>{formatToken(BigInt(fund.toVault))} USDT went to the vault while the club was empty</span>}
+                {state === "current" && <div className="club-claim">
+                  <small>Your share waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b>
+                  <span>{royaltyClaimable === false ? `Held until you have ${rules.clubClaimDirects[rank]} directs (you have ${directCount})` : "Claimable — paid with your next withdrawal"}</span>
+                  <button className="pill" disabled={!withdrawable || claimBusy || royaltyClaimable === false} onClick={event => { event.stopPropagation(); doClaim(); }}>{claimBusy ? "Withdrawing…" : "Claim with withdrawal"}</button>
+                </div>}
+              </div>
             </div>;
           })}</div>
           <div className={`superstar-club${isWeeklyLeader ? " leading" : ""}`}>
@@ -1421,8 +1441,9 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
 
 /** Single-Leg re-entry: the one-time $9 re-entry at Single-Leg Level 3, for you and for each member of your team. */
 function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reentries }: {
-  address?: Address; slTeam?: number; line?: { reentry: number; reentryLevel: number; reentryTeam: number }; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
+  address?: Address; slTeam?: number; line?: { reentry: number; reentryLevel: number; reentryTeam: number; metAt: boolean[] }; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
 }) {
+  void slTeam;
   const teamQuery = useOnchainTeam(address);
   const members = teamQuery.data ?? [];
   const reads = useReadContracts({
@@ -1440,7 +1461,8 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
   const needTeam = Number(quote?.[0] ?? 30n);
   const needDirects = Number(quote?.[1] ?? 1n);
   const amount = quote?.[3] ?? 9_000_000n;
-  const teamValue = slTeam ?? 0;
+  // Level 3 counts people after you who reached Level 2 (met once the Level 3 cursor passes you).
+  const teamValue = line?.metAt[3] ? needTeam : 0;
   const mine = Number(reentries ?? 0n);
   const reentered = members
     .map((member, index) => ({ ...member, reentries: Number((reads.data?.[1 + index * 2]?.result as bigint | undefined) ?? 0n), level: Number(reads.data?.[2 + index * 2]?.result ?? 0) }))
@@ -1448,7 +1470,7 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
   const teamProgress = Math.min(100, teamValue / needTeam * 100);
 
   return <div className="progression-view reentry-view">
-    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {formatToken(amount)} USDT re-entry</h4></div><p>When a member reaches Single-Leg Level 3 ({needTeam} people joined after them in the line, plus {needDirects} direct), they get a new position at the end of the line that climbs the levels and pays again. The contract records a one-time re-entry funded with {formatToken(amount)} USDT from the Single-Leg pool.</p></div>
+    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {formatToken(amount)} USDT re-entry</h4></div><p>When a member reaches Single-Leg Level 3 ({needTeam} people after them in the line who reached Level 2, plus {needDirects} directs), they get a new position at the end of the line that climbs the levels and pays again. The contract records a one-time re-entry funded with {formatToken(amount)} USDT from the Single-Leg pool.</p></div>
     <div className="db-summary">
       <div className="primary"><span className="db-sum-icon"><Zap size={16}/></span><small>Your re-entries</small><b>{reentries === undefined ? "—" : mine}</b><span>{mine > 0 ? "Re-entry completed at Single-Leg Level 3" : `Unlocks at Single-Leg Level 3 · you are at Level ${singleLeg ?? 0}`}</span></div>
       <div><span className="db-sum-icon"><Layers size={16}/></span><small>Your re-entry position</small><b>{line?.reentry ? `#${line.reentry}` : "—"}</b><span>{line?.reentry ? `Level ${line.reentryLevel} / 10 · ${line.reentryTeam.toLocaleString()} joined after it` : `${entries?.toString() ?? "1"} entry so far`}</span></div>
@@ -1458,10 +1480,10 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
     {mine === 0 && <div className="db-card reentry-progress">
       <div className="db-section-head"><div><small>YOUR PROGRESS</small><h3>Road to your re-entry</h3></div><span className="db-tag">Level {singleLeg ?? 0} / 3</span></div>
       <div className="club-reqs">
-        <div><div><span>Joined after you</span><b>{Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
+        <div><div><span>After you at Level 2+</span><b>{Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
         <div><div><span>Direct referrals</span><b>{Math.min(directs, needDirects)} / {needDirects}</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directs / Math.max(1, needDirects) * 100)}%` }}/></div></div>
       </div>
-      <p className="db-foot-note">{teamValue >= needTeam && directs >= needDirects ? "Requirements met — your re-entry is recorded with the next team registration." : `${Math.max(0, needTeam - teamValue).toLocaleString()} more people need to join after you.`}</p>
+      <p className="db-foot-note">{teamValue >= needTeam && directs >= needDirects ? "Requirements met — your re-entry is recorded with the next team registration." : `${needTeam} people after you need to reach Single-Leg Level 2.`}</p>
     </div>}
 
     <div className="db-card">
@@ -1481,8 +1503,8 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
 
 /** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
 const SINGLE_LEG_TABLE = [
-  [10, 1, 11, 5, 1], [25, 2, 15, 0, 2], [55, 3, 35, 9, 3], [115, 5, 50, 0, 5], [365, 8, 150, 0, 10],
-  [965, 11, 500, 0, 30], [1_965, 14, 1_500, 0, 100], [3_465, 17, 3_500, 0, 400], [5_965, 21, 10_000, 0, 1_000], [9_665, 25, 15_000, 0, 2_500],
+  [10, 1, 6, 0, 1], [15, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
+  [600, 11, 500, 0, 30], [1_000, 14, 1_500, 0, 100], [1_500, 17, 3_500, 0, 400], [2_500, 21, 10_000, 0, 1_000], [3_700, 25, 15_000, 0, 2_500],
 ] as const;
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
@@ -1504,8 +1526,10 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
   const directValue = Number(directs ?? 0n);
   const done = currentLevel ?? 0;
   const next = levels[done];
-  const countedTeam = teamValue;
-  const teamLabel = "Joined after you";
+  // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
+  const nextMet = next ? (next.level === 1 ? teamValue >= next.members : Boolean(line?.metAt[next.level])) : true;
+  const countedTeam = !next ? 0 : next.level === 1 ? teamValue : nextMet ? next.members : 0;
+  const teamLabel = !next || next.level === 1 ? "Joined after you" : `After you at Level ${next.level - 1}+`;
   const netReward = (level: typeof levels[number]) => level.income;
   const allocationNote = (level: typeof levels[number]) => level.extra === 0 ? undefined : level.level === 1 ? `${usdt(level.extra)} USDT → Global pool` : `${usdt(level.extra)} USDT → 1-time re-entry`;
   const earned = levels.slice(0, done).reduce((sum, level) => sum + netReward(level), 0);
@@ -1513,14 +1537,16 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
   const teamLeft = next ? Math.max(0, next.members - countedTeam) : 0;
   const directsLeft = next ? Math.max(0, next.directs - directValue) : 0;
   const todo = [
-    teamLeft > 0 && `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "person" : "people"} to join the platform after you`,
+    teamLeft > 0 && (next?.level === 1
+      ? `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "person" : "people"} to join the platform after you`
+      : `have ${next?.members.toLocaleString()} people after you reach Single-Leg Level ${(next?.level ?? 2) - 1}`),
     directsLeft > 0 && `personally invite ${directsLeft} more ${directsLeft === 1 ? "person" : "people"}`,
   ].filter(Boolean) as string[];
   const bar = (have: number, need: number) => <div className="sl-bar"><i style={{ width: `${need ? Math.min(100, have / need * 100) : 100}%` }}/></div>;
 
   return <div className="progression-view sl">
     <div className="sl-explain">
-      <div><span>1</span><b>Grow your team</b><p>Everyone who joins under you, up to 10 levels deep, counts toward your team.</p></div>
+      <div><span>1</span><b>The line grows</b><p>Level 1 counts everyone who joins after you. Each higher level counts people after you who reached the level below.</p></div>
       <div><span>2</span><b>Invite people yourself</b><p>Each level also needs a few members you referred directly.</p></div>
       <div><span>3</span><b>Unlock a one-time reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
     </div>
@@ -1564,16 +1590,14 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
       <div className="sl-row sl-th" role="row"><span>Level</span><span>Team needed</span><span>Direct referrals</span><span>Your reward</span><span>Status</span></div>
       {levels.map(l => {
         const state = l.level <= done ? "done" : l.level === done + 1 ? "next" : "locked";
-        // Team totals add up level by level; show progress within the level being filled.
-        const previous = l.level === 1 ? 0 : levels[l.level - 2].members;
-        const step = l.members - previous;
-        const filled = Math.min(step, Math.max(0, teamValue - previous));
+        // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
+        const met = l.level === 1 ? teamValue >= l.members : Boolean(line?.metAt[l.level]);
         return <div className={`sl-row ${state}`} role="row" key={l.level}>
           <span className="sl-lvl"><i>{state === "done" ? <Check size={13}/> : l.level}</i><em>Level {l.level}</em></span>
-          <span data-label="Team">{l.members.toLocaleString()}{l.level > 1 && <small> (+{step.toLocaleString()})</small>}</span>
+          <span data-label="Team">{l.members.toLocaleString()}{l.level > 1 && <small> at Level {l.level - 1}+</small>}</span>
           <span data-label="Directs">{l.directs}</span>
           <span data-label="Reward" className="sl-amt"><span>{usdt(netReward(l))} USDT{allocationNote(l) && <small>{allocationNote(l)}</small>}</span></span>
-          <span className="sl-status">{state === "done" ? "Complete" : state === "next" ? `In progress · ${filled.toLocaleString()} / ${step.toLocaleString()}` : "Locked"}</span>
+          <span className="sl-status">{state === "done" ? "Complete" : state === "next" ? l.level === 1 ? `In progress · ${Math.min(teamValue, l.members).toLocaleString()} / ${l.members}` : met ? "Members met · needs directs" : "In progress" : "Locked"}</span>
         </div>;
       })}
     </div>

@@ -69,6 +69,14 @@ export function useSingleLegLine(address?: Address, limit = 50) {
     queryFn: async () => {
       if (!address || !client || !protocolAddress) return undefined;
       const [primary, primaryLevel, reentry, reentryLevel, line] = await client.readContract({ address: protocolAddress, abi: protocolAbi, functionName: "singleLegInfo", args: [address] }) as readonly [bigint, number, bigint, number, bigint];
+      // Level L's member condition is met once the level's cursor has passed the position (contract _sweepLine).
+      const levelReads = await client.multicall({ allowFailure: false, contracts: [
+        ...Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "lineCursor" as const, args: [index + 1] as const })),
+        ...Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "singleLegReached" as const, args: [index + 1] as const })),
+      ] }) as bigint[];
+      const cursors = levelReads.slice(0, 10).map(value => Number(value) || 1);
+      const reachedTotals = levelReads.slice(10).map(Number);
+      const membersMet = (position: number, level: number) => position > 0 && position < cursors[level - 1];
       const first = Number(primary) + 1;
       const last = Math.min(Number(line), Number(primary) + limit);
       const positions = Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => first + index);
@@ -81,6 +89,10 @@ export function useSingleLegLine(address?: Address, limit = 50) {
       return {
         primary: Number(primary), primaryLevel: Number(primaryLevel), reentry: Number(reentry), reentryLevel: Number(reentryLevel),
         line: Number(line), team: Number(line) - Number(primary), reentryTeam: reentry ? Number(line) - Number(reentry) : 0, after,
+        /** metAt[L]: your first position has enough members after it for Level L (index 1–10). */
+        metAt: [false, ...Array.from({ length: 10 }, (_, index) => membersMet(Number(primary), index + 1))],
+        /** reachedTotals[k-1]: positions in the whole line that have reached Level k. */
+        reachedTotals,
       };
     },
   });

@@ -22,6 +22,9 @@ export const rewardCredited = parseAbiItem(
 export const poolIncomeQueued = parseAbiItem(
   "event PoolIncomeQueued(address indexed account, uint8 indexed pool, uint8 level, uint256 amount)",
 );
+export const clubRoyaltyDistributed = parseAbiItem(
+  "event ClubRoyaltyDistributed(uint8 indexed rank, uint256 amount, uint64 members)",
+);
 export const claimed = parseAbiItem(
   "event Claimed(address indexed account, uint256 gross, uint256 net, uint256 royalty, uint256 development)",
 );

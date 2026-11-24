@@ -154,8 +154,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     mapping(address => uint64) internal primaryPosition;
     mapping(address => uint64) public reentryPosition;
     mapping(address => uint8) public reentryLevel;
-    /// @dev Per Single-Leg level, the next position to check for reaching that level's team size.
-    mapping(uint8 => uint64) internal lineCursor;
+    /// @notice Per Single-Leg level: every position before this one has enough (qualified) members after it.
+    mapping(uint8 => uint64) public lineCursor;
 
     // ---- Appended in the Working upgrade-fill upgrade (uses 1 gap slot). ----
     /// @notice Team members (15 levels deep) who have entered each Working level: everyone enters Level 1 by
@@ -171,9 +171,15 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// Key = level for Working, level + 16 for Non-Working.
     mapping(address => mapping(uint8 => uint8)) public matrixFilled;
 
+    // ---- Appended in the qualified Single-Leg upgrade (uses 2 gap slots). ----
+    /// @notice Positions in the line that have reached each Single-Leg level.
+    mapping(uint8 => uint64) public singleLegReached;
+    /// @dev Per level L (>= 2): positions before lineCursor[L] that have reached Level L-1.
+    mapping(uint8 => uint64) internal singleLegBehind;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[25] private __gap;
+    uint256[23] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -637,13 +643,30 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (reentry != 0) _processPosition(reentry);
     }
     /// @dev Checks every position whose team (positions after it) has just reached a level's size.
+    /// @dev Level 1 counts every position after yours; Level L (L >= 2) counts positions after yours that
+    /// reached Level L-1. That count never shrinks and is larger for earlier positions, so each level keeps a
+    /// cursor: every position before lineCursor[L] already has enough qualified members after it.
     function _sweepLine() private {
         for (uint8 level = 1; level <= 10; ++level) {
-            uint64 cursor = lineCursor[level];
-            if (cursor == 0) cursor = 1;
-            while (cursor + _singleLegMembers(level) <= lineLength) _processPosition(cursor++);
-            lineCursor[level] = cursor;
+            for (;;) {
+                uint64 position = _cursor(level);
+                if (position > lineLength) break;
+                uint64 qualified = level == 1 ? lineLength - position
+                    : singleLegReached[level - 1] - singleLegBehind[level] - (_levelOf(position) >= level - 1 ? 1 : 0);
+                if (qualified < _singleLegMembers(level)) break;
+                lineCursor[level] = position + 1;
+                if (level > 1 && _levelOf(position) >= level - 1) singleLegBehind[level]++;
+                _processPosition(position);
+            }
         }
+    }
+    function _cursor(uint8 level) private view returns (uint64 position) {
+        position = lineCursor[level];
+        if (position == 0) position = 1;
+    }
+    function _levelOf(uint64 position) private view returns (uint8) {
+        address owner = lineOwnerAt(position);
+        return position == _primaryOf(owner) ? singleLegLevel[owner] : reentryLevel[owner];
     }
 
     /// @dev Single-Leg Pool (Hybrid) table for one position. "Your income" goes to the owner; on the first
@@ -655,7 +678,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         bool primary = position == _primaryOf(account);
         uint8 level = (primary ? singleLegLevel[account] : reentryLevel[account]) + 1;
         while (
-            level <= 10 && lineLength - position >= _singleLegMembers(level)
+            level <= 10 && position < _cursor(level)
                 && participants[account].directCount >= _singleLegDirects(level)
         ) {
             uint256 ownAmount = _singleLegIncome(level) * tokenUnit;
@@ -673,6 +696,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             if (_eligibleUpline(u2)) pendingSingleLegIncome[u2] += uplineAmount;
             if (primary) singleLegLevel[account] = level;
             else reentryLevel[account] = level;
+            // This position now counts for Level `level + 1` of every position before it.
+            singleLegReached[level]++;
+            if (level < 10 && position < _cursor(level + 1)) singleLegBehind[level + 1]++;
             emit PoolIncomeQueued(account, 1, level, ownAmount + 2 * uplineAmount);
             unchecked { ++level; }
         }
@@ -733,19 +759,19 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 5 * (2 ** (level - 2));
     }
 
-    /// @dev Total positions needed after yours: the table's per-level team (10, 15, 30, 60, 250, 600,
-    /// 1,000, 1,500, 2,500, 3,700) added up.
+    /// @dev Members needed after your position (Team column): Level 1 counts everyone after you; Level L
+    /// counts those who reached Level L-1.
     function _singleLegMembers(uint8 level) private pure returns (uint64) {
         if (level == 1) return 10;
-        if (level == 2) return 25;
-        if (level == 3) return 55;
-        if (level == 4) return 115;
-        if (level == 5) return 365;
-        if (level == 6) return 965;
-        if (level == 7) return 1_965;
-        if (level == 8) return 3_465;
-        if (level == 9) return 5_965;
-        return 9_665;
+        if (level == 2) return 15;
+        if (level == 3) return 30;
+        if (level == 4) return 60;
+        if (level == 5) return 250;
+        if (level == 6) return 600;
+        if (level == 7) return 1_000;
+        if (level == 8) return 1_500;
+        if (level == 9) return 2_500;
+        return 3_700;
     }
 
     /// @dev Total directs for a Single-Leg level: the table's per-level directs (1,1,1,2,3,3,3,3,4,4) added up.
@@ -757,7 +783,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function _singleLegIncome(uint8 level) private pure returns (uint256) {
-        if (level == 1) return 11;
+        if (level == 1) return 6;
         if (level == 2) return 15;
         if (level == 3) return 35;
         if (level == 4) return 50;

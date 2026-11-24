@@ -7,6 +7,24 @@ const prisma = new PrismaClient();
 await app.register(cors, { origin: true, methods: ["GET"] });
 
 app.get("/health", async () => ({ ok: true }));
+/** Royalty received by each star club (3% of every withdrawal), and what went to the vault while empty. */
+app.get("/api/clubs", async () => {
+  const [received, toVault, checkpoint] = await Promise.all([
+    prisma.clubRoyalty.groupBy({ by: ["rank"], where: { members: { gt: 0 } }, _sum: { amount: true }, _count: true }),
+    prisma.clubRoyalty.groupBy({ by: ["rank"], where: { members: 0 }, _sum: { amount: true } }),
+    prisma.blockCheckpoint.findFirst({ orderBy: { blockNumber: "desc" } }),
+  ]);
+  return {
+    indexedThrough: checkpoint?.blockNumber.toString() ?? null,
+    clubs: [1, 2, 3, 4, 5].map((rank) => ({
+      rank,
+      received: received.find((row) => row.rank === rank)?._sum.amount?.toFixed() ?? "0",
+      distributions: received.find((row) => row.rank === rank)?._count ?? 0,
+      toVault: toVault.find((row) => row.rank === rank)?._sum.amount?.toFixed() ?? "0",
+    })),
+  };
+});
+
 app.get("/api/stats", async () => {
   const [members, allocation, checkpoint] = await Promise.all([
     prisma.participant.count(),

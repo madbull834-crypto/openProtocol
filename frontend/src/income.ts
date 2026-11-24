@@ -107,6 +107,21 @@ export function usePoolSources(address: Address | undefined, pool: number | unde
   });
 }
 
+export type ClubFund = { rank: number; received: string; distributions: number; toVault: string };
+/** Royalty each star club has received (from its ClubRoyaltyDistributed events) and what went to the vault. */
+export function useClubFunds() {
+  return useQuery({
+    queryKey: ["club-funds"],
+    refetchInterval: 30_000,
+    retry: 1,
+    queryFn: async (): Promise<ClubFund[]> => {
+      const response = await fetch(`${apiBaseUrl}/api/clubs`);
+      if (!response.ok) throw new Error(`Club service returned ${response.status}`);
+      return (await response.json() as { clubs: ClubFund[] }).clubs;
+    },
+  });
+}
+
 /** Lifetime income history from the indexer. `isError` means the history service is unreachable. */
 export function useIncomeHistory(address?: Address) {
   return useQuery({
