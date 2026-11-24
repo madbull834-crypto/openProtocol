@@ -87,8 +87,8 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
     // Working Level 1 = 2 directs; Level 2 needs 4 members at depth 2, and there are none.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    // Everyone enters Non-Working on joining: a team of 4 is Non-Working Level 2.
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(2);
+    // Non-Working Level 1 fills with the first 2 entries; genesis has no upline to host its Level 2 entry.
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(1);
     expect(await protocol.starRank(genesis.address)).to.equal(2);
     expect(await protocol.starRank(alice.address)).to.equal(1);
   });
@@ -188,31 +188,24 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(5);
   });
 
-  it("fills Working levels with team members who upgraded into them", async function () {
-    const { genesis, alice, bob, protocol, token } = await fixture();
-    await protocol.connect(alice).register(genesis.address);
-    await protocol.connect(bob).register(genesis.address);
-    // Level 1 completes with 2 directs; its 12 USDT was paid by the 1st direct, so nothing more is queued.
+  it("fills each Working level with entries that paid its ID amount (self-funding)", async function () {
+    const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
+    for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
+    // Level 1 completed by the 2nd direct (its 15 USDT is the upgrade); genesis has no upline to host Level 2.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
-
-    // Depth alone no longer counts: 4 members two levels down who have not upgraded.
-    const [a1, a2] = await addMembers(protocol, token, alice.address, 2); // alice completes L1 -> enters L2
-    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(1);
-    const [b1, b2] = await addMembers(protocol, token, bob.address, 2); // bob enters L2
-    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(2);
-    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-
-    // a1 and a2 complete Level 1 too (2 directs each): 4 team members have entered Level 2.
-    await addMembers(protocol, token, a1.address, 2);
-    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    await addMembers(protocol, token, a2.address, 2);
-    expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(4);
+    // Each direct completing Level 1 enters Level 2 and fills one of genesis's 4 Level 2 positions.
+    for (const [index, direct] of [alice, bob, carol, dave].entries()) {
+      await addMembers(protocol, token, direct.address, 2);
+      expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(index + 1);
+    }
+    // Level 2: 4 × 15 = 60 turnover, 30 auto-upgrade into Level 3, 80% of 30 = 24 USDT to genesis.
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    void b1; void b2;
-    // Level 2: turnover 60, auto-upgrade 30 -> 80% of 30 = 24 USDT. Team members' Level 1 completions
-    // queue nothing (Level 1 is paid through directs), so there are no upline shares from them.
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
+    // The 60 USDT of entries were held in the Working reserve, so the level is fully backed.
+    expect(await protocol.workingReserve()).to.be.greaterThanOrEqual(24_000_000n);
+    await protocol.connect(genesis).settlePoolRewards();
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -232,8 +225,8 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.singleLegReserve()).to.equal(225_000_000n); // 25 × 9, no redirect
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(150_000_000n); // 2 Star: 5 × 30
     await protocol.connect(genesis).settlePoolRewards();
-    // 26 USDT Single-Leg (Working Level 1 was paid through directs; Level 2 needs upgraded team members).
-    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(26_000_000n);
+    // 26 USDT Single-Leg + 4 USDT Non-Working Level 1 (Working Level 1 was paid through the directs).
+    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(30_000_000n);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -373,18 +366,49 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("enters every member into Non-Working on joining, independent of Single-Leg", async function () {
-    const { genesis, alice, protocol, token } = await fixture();
+  it("enters every member into Non-Working Level 1 with their 5 USDT, independent of Single-Leg", async function () {
+    const { genesis, alice, bob, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0); // 1 team member
-    await addMembers(protocol, token, alice.address, 1);
-    // Team of 2 (one is two levels down): Non-Working Level 1 -> 80% of (2 × 5 − 5) = 4 USDT.
+    expect(await protocol.matrixFilled(genesis.address, 17)).to.equal(1); // Non-Working Level 1 key = 1 + 16
+    const [a1] = await addMembers(protocol, token, alice.address, 1); // hosted by alice, not genesis
+    expect(await protocol.matrixFilled(alice.address, 17)).to.equal(1);
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
+    await protocol.connect(bob).register(genesis.address);
+    // Genesis Level 1 complete: 2 × 5 = 10 turnover, 5 upgrade, 80% of 5 = 4 USDT.
     expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(1);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(0); // Single-Leg is unrelated
     expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_000_000n);
-    await addMembers(protocol, token, genesis.address, 7);
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(4); // team of 9
-    expect(await protocol.nonWorkingReserve()).to.equal(45_000_000n); // 9 tickets × 5
+    // alice completes Level 1 too: her upgrade enters genesis's Level 2, and genesis gets U1 10% of 5.
+    await addMembers(protocol, token, alice.address, 1);
+    expect(await protocol.matrixFilled(genesis.address, 18)).to.equal(1);
+    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_500_000n);
+    expect(await protocol.nonWorkingReserve()).to.equal(20_000_000n); // 4 tickets × 5, nothing paid out yet
+    void a1;
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("keeps every queued Working and Non-Working payout backed by its reserve", async function () {
+    const { genesis, protocol, token } = await fixture();
+    const members: string[] = [genesis.address];
+    let seed = 7;
+    for (let i = 0; i < 60; i++) {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const sponsor = members[seed % Math.min(members.length, 12)]; // dense early tree, like real growth
+      const [member] = await addMembers(protocol, token, sponsor, 1);
+      members.push(member.address);
+    }
+    let working = 0n;
+    let nonWorking = 0n;
+    for (const member of members) {
+      working += await protocol.pendingWorkingPoolIncome(member);
+      nonWorking += await protocol.pendingNonWorkingPoolIncome(member);
+    }
+    // Self-funding: everything queued is covered by entries already paid into each pool.
+    // Random growth completes many Non-Working levels; Working Level 2 needs 4 directs who each completed
+    // Level 1, which the structured test above covers.
+    expect(nonWorking).to.be.greaterThan(0n);
+    expect(await protocol.workingReserve()).to.be.greaterThanOrEqual(working);
+    expect(await protocol.nonWorkingReserve()).to.be.greaterThanOrEqual(nonWorking);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 

@@ -16,6 +16,7 @@ export const protocolAbi = [
   { type: "function", name: "clubClaimDirects", stateMutability: "pure", inputs: [{ name: "rank", type: "uint8" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "heldRoyalty", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "royaltyClaimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "bool" }] },
+  { type: "function", name: "matrixFilled", stateMutability: "view", inputs: [{ name: "account", type: "address" }, { name: "key", type: "uint8" }], outputs: [{ type: "uint8" }] },
   { type: "function", name: "singleLegInfo", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "primary", type: "uint64" }, { name: "primaryLevel", type: "uint8" }, { name: "reentry", type: "uint64" }, { name: "reentryLvl", type: "uint8" }, { name: "line", type: "uint64" }] },
   { type: "function", name: "reentryPosition", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "lineOwnerAt", stateMutability: "view", inputs: [{ name: "position", type: "uint64" }], outputs: [{ type: "address" }] },

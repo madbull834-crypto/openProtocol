@@ -26,9 +26,9 @@ export type SingleLegTeamMember = DirectReferral & {
 export const incomeStreams = [
   { reason: "DIRECT_INCOME", name: "Working Matrix direct", note: "12 USDT from each direct referral after your first two" },
   { reason: "TEN_LEVEL_UPLINE", name: "Working Matrix upline", note: "The 10%, 4%, 2% and 0.5% Working Matrix levels" },
-  { reason: "WORKING_LEVEL_INCOME", name: "Working Pool level income", note: "80% of each Working level reached, plus U1–U9 shares from your team" },
+  { reason: "WORKING_LEVEL_INCOME", name: "Working Pool level income", note: "80% of each Working level you complete (Level 2+), plus U1–U9 shares when your team completes levels" },
   { reason: "SINGLE_LEG_INCOME", name: "Single-Leg income", note: "Net level rewards moved from the Single-Leg reserve" },
-  { reason: "NON_WORKING_MATRIX_INCOME", name: "Non-Working Matrix", note: "Non-Working levels: a new level every 2 team members, funded by 5 USDT of every ticket" },
+  { reason: "NON_WORKING_MATRIX_INCOME", name: "Non-Working Matrix", note: "80% of each Non-Working level you complete, plus U1–U9 shares; funded by the entries that fill it" },
   { reason: "REENTRY", name: "Non-Working re-entry", note: "From completed Non-Working Matrix cycles" },
   { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "The accumulated $1 registration fund for the weekly winner" },
   {

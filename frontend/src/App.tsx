@@ -697,8 +697,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const tabs = [["overview", "Overview", LayoutGrid], ["earnings", "Earnings", TrendingUp], ["network", "Network", Network], ["royalty", "Royalty Income", Crown], ["ledger", "Income Ledger", WalletCards]] as const;
   const poolInfo = {
     single: { name: "Single-Leg", note: "Team size + direct referral milestones", tone: "blue", Icon: TrendingUp, level: singleLeg ?? 0, max: 10 },
-    working: { name: "Working", note: "A new level with 2×L members at depth L", tone: "green", Icon: Layers, level: working ?? 0, max: 15 },
-    nonWorking: { name: "Non-Working", note: "A new level every 2 team members", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
+    working: { name: "Working", note: "Each level fills with entries from your team", tone: "green", Icon: Layers, level: working ?? 0, max: 15 },
+    nonWorking: { name: "Non-Working", note: "Each level fills with entries from your team", tone: "purple", Icon: Network, level: nonWorkingShown, max: 15 },
   } as const;
   const visiblePools = teamIncome.pools;
   const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 5);
@@ -884,7 +884,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-lifecycle">
           <article><span className="db-icon"><Zap size={16}/></span><small>Single-Leg entries</small><b>{singleLegEntries?.toString() ?? "—"}</b><em>{singleLegReentries?.toString() ?? "0"} automatic re-entry at Level 3</em></article>
           <article><span className="db-icon"><Network size={16}/></span><small>Non-working re-entry</small><b>{nonWorkingReentries?.toString() ?? "—"}</b><em>One cycle per 30 qualified team members</em></article>
-          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working level</small><b>{nonWorkingShown} <i>/ 15</i></b><em>Entered on joining · a new level every 2 team members</em></article>
+          <article><span className="db-icon"><Award size={16}/></span><small>Non-Working level</small><b>{nonWorkingShown} <i>/ 15</i></b><em>Entered on joining with your 5 USDT · levels fill with your team's entries</em></article>
           <article><span className="db-icon"><ShieldCheck size={16}/></span><small>Pool earning cap</small><b>{capLabel}</b><em>{teamIncome.unlimited ? "No pool cap at this rank" : `${formatToken(teamIncome.capLeft)} USDT capacity remaining`}</em></article>
         </div>
 
@@ -1297,50 +1297,47 @@ const dollars = (value?: bigint) => value === undefined ? "—" : `$${formatToke
 function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0, maxLevel, quotes }: {
   kind: "working" | "nonworking"; address?: Address; team?: bigint; currentLevel?: number; maxLevel: number; quotes: (WorkingQuote | undefined)[];
 }) {
-  const teamValue = Number(team ?? 0n);
-  // Same rule as the contract's `_recordTeamGrowth`: level = min(max, team / 2). Taking the larger value keeps a
-  // level shown as complete even if the level read is still loading or lags the team count.
-  // Working levels come straight from the contract (depth-based); Non-Working also counts entered members / 2.
-  const currentLevel = kind === "working" ? contractLevel : Math.max(contractLevel, Math.min(maxLevel, Math.floor(teamValue / 2)));
+  void team;
+  // Self-funding matrices: levels come from the contract; a level fills with entries placed in your matrix.
+  const currentLevel = contractLevel;
   const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
-  const teamQuery = useOnchainTeam(address, kind === "working" ? 15 : 10);
-  // Working: each team member's completed level; they have entered Level L once they completed Level L-1.
-  const workingReads = useReadContracts({
+  const teamQuery = useOnchainTeam(address, 1);
+  const directs = [...(teamQuery.data ?? [])].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
+  // Entries placed in your matrix at the level you are filling (key: level, or level + 16 for Non-Working).
+  const fillReads = useReadContracts({
     allowFailure: true,
-    contracts: kind === "working" && protocolAddress ? (teamQuery.data ?? []).map(member => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "workingLevel" as const, args: [member.address] as const })) : [],
-    query: { enabled: kind === "working" && Boolean(teamQuery.data?.length), refetchInterval: 30_000 },
+    contracts: protocolAddress && address ? Array.from({ length: maxLevel }, (_, index) => ({
+      address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "matrixFilled" as const,
+      args: [address, kind === "working" ? index + 1 : index + 17] as const,
+    })) : [],
+    query: { enabled: Boolean(protocolAddress && address), refetchInterval: 15_000 },
   });
-  const completedOf = new Map((teamQuery.data ?? []).map((member, index) => [member.address, Number(workingReads.data?.[index]?.result ?? 0)]));
-  /** Team members in Working Level L: directs for Level 1, members who upgraded into Level L above that. */
-  const enteredLevel = (level: number) => (teamQuery.data ?? []).filter(member => level === 1 ? member.depth === 1 : (completedOf.get(member.address) ?? 0) >= level - 1);
-  const eligibleTeam = teamQuery.data ?? [];
-  // Team positions are filled in the order members joined your ten-level team.
-  const teamInOrder = [...eligibleTeam].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
   const quote = quotes[selectedLevel - 1];
   const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
-  // Working Level 1 holds your directs; Level L holds team members (15 levels deep) who upgraded into Level L
-  // by completing Level L-1. No limit per level; the level's team requirement is the milestone.
-  const unlimited = kind === "working";
-  const levelMembers = unlimited ? [...enteredLevel(selectedLevel)].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId))) : [];
-  const holders = unlimited ? levelMembers : teamInOrder;
-  const filledCount = unlimited ? (teamQuery.data ? levelMembers.length : 0) : Math.min(teamValue, required);
-  const nodeCount = unlimited ? Math.max(required, filledCount) : required;
+  /** Filled positions: all of a completed level, the live count for the level you are filling, none above. */
+  const filledAt = (level: number) => {
+    const size = level * 2;
+    if (currentLevel >= level) return size;
+    if (level !== currentLevel + 1) return 0;
+    if (kind === "working" && level === 1) return Math.min(directs.length, size);
+    return Number(fillReads.data?.[level - 1]?.result ?? 0);
+  };
+  // Working Level 1 holds all your directs (every direct after the 2nd pays you again); other levels are fixed.
+  const workingLevelOne = kind === "working" && selectedLevel === 1;
+  const holders = workingLevelOne ? directs : [];
+  const filledCount = workingLevelOne ? directs.length : filledAt(selectedLevel);
+  const nodeCount = workingLevelOne ? Math.max(required, filledCount) : required;
   const positions = Array.from({ length: nodeCount }, (_, index) => index + 1);
   const filledInLevel = Math.min(filledCount, required);
-  // A level stays "In progress" once any of its positions is filled: levels keep accepting users, so none is shown as complete.
-  // Working: In progress once a team member has upgraded into that level. Non-Working: once its positions start filling.
-  const levelActive = (level: number) => currentLevel >= level
-    || (kind === "working" ? enteredLevel(level).length > 0 : teamValue >= level * 2 - 1);
-  // Non-Working levels are marked Complete once filled; Working levels stay In progress (unlimited users).
-  const completes = kind === "nonworking";
-  // Working: completing Level L upgrades you into Level L+1, which shows as Unlocked until it is completed.
-  const upgradedInto = kind === "working" ? Math.min(maxLevel, currentLevel + 1) : 0;
-  const levelState = (level: number) => completes && currentLevel >= level ? "reached"
-    : currentLevel >= level ? "current"
+  const unlimited = workingLevelOne;
+  const levelActive = (level: number) => level <= currentLevel + 1;
+  const completes = true;
+  const upgradedInto = Math.min(maxLevel, currentLevel + 1);
+  const levelState = (level: number) => currentLevel >= level ? "reached"
     : level === upgradedInto ? "unlocked"
-    : levelActive(level) ? "current" : "locked";
+    : "locked";
   const stateLabel = { reached: "Complete", current: "In progress", unlocked: "Unlocked", locked: "Locked" } as const;
   const reached = currentLevel >= selectedLevel;
   const current = levelActive(selectedLevel);
@@ -1378,19 +1375,21 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
             <i>{filled ? <Check size={14}/> : position}</i>
             <b>{filled ? "FILLED" : "OPEN"}</b>
             <small>{holder ? <span className="mono">{shortAddress(holder.address)}</span> : `Position ${position}`}</small>
-            {holder && <em>{holder.depth === 1 ? "Direct" : `Depth ${holder.depth}`}</em>}
+            {holder && <em>Direct</em>}
           </div>;
         })}
       </div>
       {!address
         ? <p className="pool-wallet-note">Connect your wallet to view this {name.toLowerCase()} team.</p>
-        : teamQuery.isError && <p className="pool-wallet-note">Team service is unavailable right now. Positions are counted from the contract.</p>}
+        : fillReads.isError && <p className="pool-wallet-note">Couldn't read your matrix from the contract right now.</p>}
       <div className="pool-level-copy">
-        <b>{teamQuery.isLoading && address ? "Loading team…" : unlimited ? `${filledCount} ${selectedLevel === 1 ? "direct " : ""}${filledCount === 1 ? "member" : "members"} in this working level · unlimited` : `${filledInLevel} of ${required} users in this ${name.toLowerCase()} level`}</b>
-        <span>{reached && completes ? "Complete · level filled" : reached ? "In progress · accepting unlimited users" : selectedLevel === upgradedInto ? `Unlocked · you upgraded into Level ${selectedLevel}, filling its ${required} positions` : current ? "In progress · position awaiting activation" : "Locked · waiting for team members"}</span>
+        <b>{unlimited ? `${filledCount} direct ${filledCount === 1 ? "member" : "members"} · Level 1 completes with your 2nd direct` : `${filledInLevel} of ${required} positions filled`}</b>
+        <span>{reached ? "Complete · level paid and upgraded" : selectedLevel === upgradedInto ? `Unlocked · filling its ${required} positions with entries from your team` : `Locked · complete Level ${selectedLevel - 1} first`}</span>
       </div>
       <div className="pool-focus-progress"><i style={{ width: `${filledInLevel / required * 100}%` }}/></div>
-      <p>{unlimited ? <>{selectedLevel === 1 ? "Level 1 holds all your direct referrals" : `Level ${selectedLevel} holds your team members who upgraded into Level ${selectedLevel} (completed Level ${selectedLevel - 1})`}, with no limit. The first {required} complete the level's milestone.</> : <>Level {selectedLevel} needs {required} team members. Positions fill in the order members joined your team.</>}<br/>Every {name} level accepts unlimited users beyond the initial advancement milestone.</p>
+      <p>{unlimited
+        ? <>Level 1 holds your direct referrals. Your 1st direct pays you; your 2nd direct's ID amount is your auto-upgrade into Level 2; every direct after that pays you again.</>
+        : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
     </div>
 
     <div className="pool-economics">

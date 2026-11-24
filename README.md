@@ -73,16 +73,16 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 
 | | Address |
 |---|---|
-| Protocol proxy (use this everywhere) | `0x40c64072Af2e12062Ca5ABC60b62640388982dF6` |
-| Implementation | `0x746d1934B9C43c2c6e4c3f11886B6E83957658c0` |
-| Deployment block (`INDEXER_START_BLOCK`) | `144453504` |
+| Protocol proxy (use this everywhere) | `0xace1B2C54518f06B86B131ec91d03bB3008D925F` |
+| Implementation | `0xC503bF26024a331B7738A3308eD57587A4108ED8` |
+| Deployment block (`INDEXER_START_BLOCK`) | `144572821` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
 
-Fresh deployment on 2026-11-24 with the 30 USDT ticket (15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar). Set
+Fresh deployment on 2026-11-24 with the 30 USDT ticket (15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar) and self-funding Working / Non-Working matrices. Set
 `PROTOCOL_PROXY_ADDRESS`, `VITE_PROTOCOL_ADDRESS` and `INDEXER_PROTOCOL_ADDRESS` to the proxy and
-`INDEXER_START_BLOCK=144453504`. When switching an existing server from the previous proxy
-(`0x1aD54218F561E5Be00D982aC7C0298CE27fBcE47`), clear the indexed tables before restarting the indexer:
+`INDEXER_START_BLOCK=144572821`. When switching an existing server from a previous proxy
+(`0x40c64072Af2e12062Ca5ABC60b62640388982dF6` or `0x1aD54218F561E5Be00D982aC7C0298CE27fBcE47`), clear the indexed tables before restarting the indexer:
 
 ```sql
 TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "BlockCheckpoint" RESTART IDENTITY;

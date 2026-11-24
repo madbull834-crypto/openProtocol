@@ -160,15 +160,20 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     // ---- Appended in the Working upgrade-fill upgrade (uses 1 gap slot). ----
     /// @notice Team members (15 levels deep) who have entered each Working level: everyone enters Level 1 by
     /// joining and enters Level L+1 by completing Level L. Level L (L >= 2) completes with 2×L of them.
-    mapping(address => mapping(uint8 => uint64)) public workingEnteredCount;
+    mapping(address => mapping(uint8 => uint64)) internal workingEnteredCount; // retired
 
     // ---- Appended in the 30 USDT ticket upgrade (uses 1 gap slot). ----
     /// @notice Share of every ticket paid straight into the Non-Working pool (5 USDT of 30).
     uint256 public nonWorkingTicketAllocation;
 
+    // ---- Appended in the self-funding matrix upgrade (uses 1 gap slot). ----
+    /// @notice Entries placed in a member's matrix at the level they are filling.
+    /// Key = level for Working, level + 16 for Non-Working.
+    mapping(address => mapping(uint8 => uint8)) public matrixFilled;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[26] private __gap;
+    uint256[25] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -184,6 +189,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     event FiveStarWeightAdvanced(address indexed account, uint64 weight);
     event SingleLegReentered(address indexed account, uint64 entry, uint256 amount);
     event NonWorkingEntryFunded(address indexed account, uint256 amount);
+    /// @notice `member` entered `level` of a matrix; `host` is the upline whose position it filled (0: none, stays in reserve).
+    event LevelEntered(address indexed member, address indexed host, bool indexed working, uint8 level);
     event ClubRoyaltyDistributed(uint8 indexed rank, uint256 amount, uint64 members);
     event ClubMembershipChanged(address indexed account, uint8 previousClub, uint8 newClub);
 
@@ -271,6 +278,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _allocateWorking(sponsor);
         singleLegReserve += nonWorkingAllocation;
         nonWorkingReserve += nonWorkingTicketAllocation;
+        _enterMatrix(msg.sender, false, 1);
         superstarReserve += clubAllocation;
         emit ParticipantRegistered(msg.sender, sponsor, newId, uint64(block.timestamp));
         emit RankAdvanced(msg.sender, 0, 1);
@@ -458,8 +466,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _recordTeamGrowth(address account) private {
         for (uint8 depth; depth < MAX_UPLINE && account != address(0); ++depth) {
             uint64 newTeam = ++teamCount[account];
-            _advanceNonWorking(account);
-            if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
             _updateFiveStarWeight(account, newTeam);
             account = participants[account].sponsor;
@@ -472,36 +478,39 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         address upline = participants[member].sponsor;
         for (uint8 level = 1; level <= MAX_WORKING_LEVEL && upline != address(0); ++level) {
             levelTeamCount[upline][level]++;
-            if (level == 1) _advanceWorking(upline); // Level 1 = 2 directs
             upline = participants[upline].sponsor;
         }
     }
 
-    /// @dev Working level L is reached, in order, once the member has 2×L members at referral depth L.
-    /// Each level queues its Working Pool table income: 80% achiever, 10% U1, 10% across U2–U9.
-    /// @dev Working Level 1 completes with 2 directs; Level L (L >= 2) with 2×L team members who have entered
-    /// Level L by upgrading. Completing a level queues its table income and enters the member into the next
-    /// level, filling a position for each of their uplines.
-    function _advanceWorking(address account) private {
-        uint8 level = workingLevel[account];
-        while (level < MAX_WORKING_LEVEL) {
-            uint8 next = level + 1;
-            uint64 filled = next == 1 ? levelTeamCount[account][1] : workingEnteredCount[account][next];
-            if (filled < uint64(next) * 2) break;
-            level = next;
-            workingLevel[account] = level;
-            if (level > 1) _queueWorkingLevel(account, level); // Level 1 is paid by the directs themselves
-            emit LevelAdvanced(account, level, nonWorkingLevel[account]);
-            if (level < MAX_WORKING_LEVEL) _enterWorkingLevel(account, level + 1);
+    /// @dev Self-funding auto-upgrade matrix (Working Pool and Non-Working Pool tables). An entry into `level`
+    /// fills one position in the matrix of the nearest upline currently filling that level; with no such
+    /// upline the entry's ID amount stays in the reserve. Every payout is backed by entries already paid in.
+    function _enterMatrix(address member, bool working, uint8 level) private {
+        address host = participants[member].sponsor;
+        for (uint8 depth; depth < MAX_WORKING_LEVEL && host != address(0); ++depth) {
+            if ((working ? workingLevel[host] : nonWorkingLevel[host]) + 1 == level) {
+                emit LevelEntered(member, host, working, level);
+                if (++matrixFilled[host][working ? level : level + 16] == level * 2) _completeLevel(host, working, level);
+                return;
+            }
+            host = participants[host].sponsor;
         }
+        emit LevelEntered(member, address(0), working, level);
     }
-    function _enterWorkingLevel(address member, uint8 level) private {
-        address upline = participants[member].sponsor;
-        for (uint8 depth; depth < MAX_WORKING_LEVEL && upline != address(0); ++depth) {
-            workingEnteredCount[upline][level]++;
-            _advanceWorking(upline);
-            upline = participants[upline].sponsor;
+
+    /// @dev Completing a level: its turnover (2 × L × ID) minus the auto-upgrade is split 80% / 10% U1 /
+    /// 10% U2–U9, and the auto-upgrade (next level's ID) enters the member into the next level.
+    /// Working Level 1 is paid through the directs themselves, so it queues nothing.
+    function _completeLevel(address account, bool working, uint8 level) private {
+        if (working) {
+            workingLevel[account] = level;
+            if (level > 1) _queueWorkingLevel(account, level);
+        } else {
+            nonWorkingLevel[account] = level;
+            _queueNonWorkingLevel(account, level);
         }
+        emit LevelAdvanced(account, workingLevel[account], nonWorkingLevel[account]);
+        if (level < MAX_WORKING_LEVEL) _enterMatrix(account, working, level + 1);
     }
 
     function _recordDirect(address member) private {
@@ -539,24 +548,11 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit RankAdvanced(account, previous, next);
     }
 
-    function _reenter(address account, bool working) private {
-        uint256 reward;
-        uint64 cycle;
-        if (working) {
-            cycle = ++workingReentries[account];
-            if (workingReserve >= workingAllocation) { reward = workingAllocation; workingReserve -= reward; }
-        } else {
-            cycle = ++nonWorkingReentries[account];
-            if (nonWorkingReserve >= nonWorkingAllocation) { reward = nonWorkingAllocation; nonWorkingReserve -= reward; }
-        }
-        _credit(account, reward, keccak256("REENTRY"));
-        emit Reentered(account, working, cycle, reward);
-    }
-
     function _allocateWorking(address sponsor) private {
         if (participants[sponsor].directCount == UPGRADE_DIRECT) {
             autoUpgradeCredit[sponsor] += workingAllocation;
             workingReserve += workingAllocation;
+            _completeLevel(sponsor, true, 1);
             return;
         }
         uint256 directAmount = workingAllocation * 8_000 / BPS;
@@ -681,19 +677,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             unchecked { ++level; }
         }
     }
-
-    /// @dev Every member enters the Non-Working matrix on joining (their 5 USDT ticket share funds it), so
-    /// a member's Non-Working team is their whole 10-level team: level = team / 2, max 15. Independent of Single-Leg.
-    function _advanceNonWorking(address account) private {
-        uint64 team = teamCount[account];
-        uint8 newLevel = uint8(team / 2 > 15 ? 15 : team / 2);
-        uint8 oldLevel = nonWorkingLevel[account];
-        if (newLevel <= oldLevel) return;
-        for (uint8 level = oldLevel + 1; level <= newLevel; ++level) _queueNonWorkingLevel(account, level);
-        nonWorkingLevel[account] = newLevel;
-        emit LevelAdvanced(account, workingLevel[account], newLevel);
-    }
-
 
     function _settleSingleLegBacked(address account, uint256 capacity) private returns (uint256 amount) {
         amount = pendingSingleLegIncome[account];
