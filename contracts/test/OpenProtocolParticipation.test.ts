@@ -51,18 +51,20 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
-  it("reserves the first direct for the upgrade and pays 12 USDT from the second", async function () {
+  it("pays 12 USDT for the 1st direct, uses the 2nd for the upgrade and pays again from the 3rd", async function () {
     const { genesis, alice, bob, carol, protocol } = await fixture();
     await protocol.connect(alice).register(genesis.address);
-    // "Your first direct referral helps you upgrade": its 12 USDT is reserved.
-    expect(await protocol.autoUpgradeCredit(genesis.address)).to.equal(12_000_000n);
-    expect(await protocol.claimable(genesis.address)).to.equal(0n);
-    await protocol.connect(bob).register(genesis.address);
+    // 1st direct: 12 USDT to the sponsor (Working Level 1 income) and 3 USDT to the uplines.
     expect(await protocol.claimable(genesis.address)).to.equal(12_000_000n);
+    await protocol.connect(bob).register(genesis.address);
+    // 2nd direct: the whole 15 USDT is the sponsor's auto-upgrade into Level 2.
+    expect(await protocol.claimable(genesis.address)).to.equal(12_000_000n);
+    expect(await protocol.autoUpgradeCredit(genesis.address)).to.equal(15_000_000n);
+    expect(await protocol.workingLevel(genesis.address)).to.equal(1);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n); // Level 1 is not paid twice
     await protocol.connect(carol).register(genesis.address);
     expect(await protocol.claimable(genesis.address)).to.equal(24_000_000n);
-    expect(await protocol.autoUpgradeCredit(genesis.address)).to.equal(12_000_000n);
-    // Reserve: the first direct's 12 + 3 per registration (genesis has no uplines to pay).
+    // Reserve: the 2nd direct's 15 + 3 from each paid direct (genesis has no uplines to pay).
     expect(await protocol.workingReserve()).to.equal(21_000_000n);
   });
 
@@ -115,7 +117,7 @@ describe("OpenProtocolParticipation", function () {
     const oneStarShare = await protocol.pendingClubReward(genesis.address);
     expect(oneStarShare).to.be.greaterThan(0n);
     await addMembers(protocol, token, alice.address, 1);
-    expect(await protocol.claimable(genesis.address)).to.equal(oneStarShare);
+    expect(await protocol.claimable(genesis.address)).to.equal(12_000_000n + oneStarShare); // alice's 12 + 1 Star share
     expect(await protocol.heldRoyalty(genesis.address)).to.equal(0n);
     // One direct, but all 16 level-2 members came through her: genesis is 3 Star.
     expect(await protocol.starRank(genesis.address)).to.equal(3);
@@ -190,9 +192,9 @@ describe("OpenProtocolParticipation", function () {
     const { genesis, alice, bob, protocol, token } = await fixture();
     await protocol.connect(alice).register(genesis.address);
     await protocol.connect(bob).register(genesis.address);
-    // Level 1 completes with 2 directs: turnover 30, auto-upgrade 15 -> 80% of 15 = 12 USDT.
+    // Level 1 completes with 2 directs; its 12 USDT was paid by the 1st direct, so nothing more is queued.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
 
     // Depth alone no longer counts: 4 members two levels down who have not upgraded.
     const [a1, a2] = await addMembers(protocol, token, alice.address, 2); // alice completes L1 -> enters L2
@@ -208,9 +210,9 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.workingEnteredCount(genesis.address, 2)).to.equal(4);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
     void b1; void b2;
-    // Level 2: turnover 60, auto-upgrade 30 -> 80% of 30 = 24 USDT, plus U1 10% of alice's and bob's
-    // Level 1 (1.5 each) and U2 1.25% of a1's and a2's Level 1 (0.1875 each).
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(12_000_000n + 24_000_000n + 2n * 1_500_000n + 2n * 187_500n);
+    // Level 2: turnover 60, auto-upgrade 30 -> 80% of 30 = 24 USDT. Team members' Level 1 completions
+    // queue nothing (Level 1 is paid through directs), so there are no upline shares from them.
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -232,8 +234,8 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.singleLegReserve()).to.equal(225_000_000n); // 25 × 9, no redirect
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(150_000_000n); // 2 Star: 5 × 30
     await protocol.connect(genesis).settlePoolRewards();
-    // 26 USDT Single-Leg plus 12 USDT Working Level 1 (15 directs: Level 2 needs depth-2 members).
-    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(38_000_000n);
+    // 26 USDT Single-Leg (Working Level 1 was paid through directs; Level 2 needs upgraded team members).
+    expect(await protocol.rankedPoolRewardsCredited(genesis.address)).to.equal(26_000_000n);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });

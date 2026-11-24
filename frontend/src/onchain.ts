@@ -151,8 +151,8 @@ export type ProtocolRules = {
   developmentBps: bigint;
   directShareBps: bigint;
   activationDirects: number;
-  /** First directs whose 80% share is reserved for the upgrade; direct income is paid after them. */
-  reservedDirects: number;
+  /** The direct whose whole Working share is the sponsor's auto-upgrade (the 2nd); every other direct pays 80%. */
+  upgradeDirect: number;
   superstarMinDirects: number;
   /** Total directs needed to claim each star club's royalty, indexed by rank (1–5). */
   clubClaimDirects: number[];
@@ -169,7 +169,7 @@ const FALLBACK: ProtocolRules = {
   developmentBps: 500n,
   directShareBps: 8_000n,
   activationDirects: 2,
-  reservedDirects: 1,
+  upgradeDirect: 2,
   superstarMinDirects: 5,
   clubClaimDirects: [0, 0, 4, 8, 12, 16],
   ticketPrice: 25_000_000n,
@@ -200,7 +200,7 @@ export function useProtocolRules(): ProtocolRules {
     ...[1, 2, 3, 4, 5].map(rank => ({ ...base, functionName: "rankRule" as const, args: [rank] as const })),
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => ({ ...base, functionName: "tenLevelPercentageBps" as const, args: [level] as const })),
     ...[1, 2, 3, 4, 5].map(rank => ({ ...base, functionName: "clubClaimDirects" as const, args: [rank] as const })),
-    { ...base, functionName: "RESERVED_DIRECTS" as const },
+    { ...base, functionName: "UPGRADE_DIRECT" as const },
   ] : [];
   const reads = useReadContracts({ allowFailure: true, contracts, query: { enabled: contracts.length > 0, staleTime: 300_000 } });
   const r = reads.data;
@@ -220,7 +220,7 @@ export function useProtocolRules(): ProtocolRules {
     developmentBps: r[1].result as bigint,
     directShareBps: r[2].result as bigint,
     activationDirects: Number(r[3].result as bigint),
-    reservedDirects: Number(r[26].result as bigint),
+    upgradeDirect: Number(r[26].result as bigint),
     superstarMinDirects: Number(r[4].result as bigint),
     clubClaimDirects: [0, ...r.slice(21, 26).map(result => Number(result.result as bigint))],
     ticketPrice,

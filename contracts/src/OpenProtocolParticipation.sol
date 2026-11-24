@@ -30,9 +30,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 public constant DIRECT_SHARE_BPS = 8_000;
     /// @notice Directs needed before direct and upline income is paid.
     uint64 public constant ACTIVATION_DIRECTS = 2;
-    /// @notice "Your first direct referral helps you upgrade": the 80% share of this many first directs is
-    /// reserved for the upgrade; every later direct pays it to the sponsor as direct income.
-    uint64 public constant RESERVED_DIRECTS = 1;
+    /// @notice Working Level 1 (team 2, ID 15): the 1st direct pays the sponsor 12 USDT and the uplines 3 USDT;
+    /// this direct's whole 15 USDT is the sponsor's auto-upgrade into Level 2. Every later direct pays 12 + 3 again.
+    uint64 public constant UPGRADE_DIRECT = 2;
     /// @notice Weekly directs needed to win the Superstar fund.
     uint64 public constant SUPERSTAR_MIN_DIRECTS = 5;
     /// @notice Directs added per star club to claim its royalty: 2 Star 4, 3 Star 8, 4 Star 12, 5 Star 16.
@@ -247,7 +247,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (participants[sponsor].id == 0) revert SponsorNotRegistered(sponsor);
         _receiveExact(msg.sender, ticketPrice);
 
-        bool sponsorWasActive = participants[sponsor].directCount >= RESERVED_DIRECTS;
         _initLine();
         uint64 newId = ++memberCount;
         participants[msg.sender] = Participant(newId, 0, sponsor, uint64(block.timestamp));
@@ -269,7 +268,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         totalWorkingAllocated += workingAllocation;
         totalNonWorkingAllocated += nonWorkingAllocation + nonWorkingTicketAllocation;
         totalClubAllocated += clubAllocation;
-        _allocateWorking(sponsor, sponsorWasActive);
+        _allocateWorking(sponsor);
         singleLegReserve += nonWorkingAllocation;
         nonWorkingReserve += nonWorkingTicketAllocation;
         superstarReserve += clubAllocation;
@@ -490,7 +489,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             if (filled < uint64(next) * 2) break;
             level = next;
             workingLevel[account] = level;
-            _queueWorkingLevel(account, level);
+            if (level > 1) _queueWorkingLevel(account, level); // Level 1 is paid by the directs themselves
             emit LevelAdvanced(account, level, nonWorkingLevel[account]);
             if (level < MAX_WORKING_LEVEL) _enterWorkingLevel(account, level + 1);
         }
@@ -553,10 +552,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit Reentered(account, working, cycle, reward);
     }
 
-    function _allocateWorking(address sponsor, bool sponsorWasActive) private {
+    function _allocateWorking(address sponsor) private {
+        if (participants[sponsor].directCount == UPGRADE_DIRECT) {
+            autoUpgradeCredit[sponsor] += workingAllocation;
+            workingReserve += workingAllocation;
+            return;
+        }
         uint256 directAmount = workingAllocation * 8_000 / BPS;
-        if (sponsorWasActive) _credit(sponsor, directAmount, keccak256("DIRECT_INCOME"));
-        else { autoUpgradeCredit[sponsor] += directAmount; workingReserve += directAmount; }
+        _credit(sponsor, directAmount, keccak256("DIRECT_INCOME"));
 
         address upline = participants[sponsor].sponsor;
         uint256 allocated = directAmount;
