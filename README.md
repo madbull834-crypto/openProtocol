@@ -74,7 +74,7 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 | | Address |
 |---|---|
 | Protocol proxy (use this everywhere) | `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72` |
-| Implementation | `0xCeE850F833EF2469754Ea9B5DCF023D9dA5d469d` |
+| Implementation | `0x5B7f3927c968F604D8a797F58A3907aDDC202245` |
 | Deployment block (`INDEXER_START_BLOCK`) | `144594547` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
@@ -89,6 +89,8 @@ TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "Blo
 ```
 
 The implementation was upgraded on 2026-11-24 in block `144642585` to make Working Level 2 use four paid positions: positions 1–2 fund the Level 3 auto-upgrade and positions 3–4 fund distribution. Upgrade transaction: `0x37f24cd3612c847f1a3edf5c7e1d5d723374577d2084c9a9ecc050506476b7ee`.
+
+The implementation was upgraded again on 2026-11-25 in block `144645596` to require 25 global Single-Leg positions after a member, plus two personal directs, for Level 2. Upgrade transaction: `0xe3987a01295f7897abfac85674817b1a973c5312f2e2aaba6aee5f835d83a259`.
 
 ## Verification and security
 
