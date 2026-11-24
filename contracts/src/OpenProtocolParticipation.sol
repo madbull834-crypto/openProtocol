@@ -802,7 +802,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// counts those who reached Level L-1.
     function _singleLegMembers(uint8 level) private pure returns (uint64) {
         if (level == 1) return 10;
-        if (level == 2) return 11;
+        if (level == 2) return 25;
         if (level == 3) return 30;
         if (level == 4) return 60;
         if (level == 5) return 250;

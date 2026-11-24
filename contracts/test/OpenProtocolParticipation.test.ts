@@ -146,7 +146,7 @@ describe("OpenProtocolParticipation", function () {
       10n, 1n, 6_000_000n, 0n, 1_000_000n, 1_000_000n,
     ]);
     expect(await protocol.singleLegQuote(2)).to.deep.equal([
-      11n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
+      25n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
     ]);
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
       30n, 3n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
@@ -221,11 +221,13 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(6_000_000n);
     expect(await protocol.nonWorkingReserve()).to.equal(50_000_000n); // 10 tickets × 5
-    // The 11th global position after genesis pays Level 2; genesis already has the required 2 directs.
-    await addMembers(protocol, token, genesis.address, 1);
+    // Level 2 waits for 25 positions after genesis and 2 total directs.
+    await addMembers(protocol, token, genesis.address, 14);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
+    await addMembers(protocol, token, genesis.address, 1); // 25th position after genesis
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(21_000_000n); // 6 + 15
-    expect(await protocol.singleLegReserve()).to.equal(99_000_000n); // 11 × 9
+    expect(await protocol.singleLegReserve()).to.equal(225_000_000n); // 25 × 9
     await protocol.connect(genesis).claim();
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);

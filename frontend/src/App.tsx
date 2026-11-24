@@ -1560,7 +1560,7 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
 
 /** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
 const SINGLE_LEG_TABLE = [
-  [10, 1, 6, 0, 1], [11, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
+  [10, 1, 6, 0, 1], [25, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
   [600, 11, 500, 0, 30], [1_000, 14, 1_500, 0, 100], [1_500, 17, 3_500, 0, 400], [2_500, 21, 10_000, 0, 1_000], [3_700, 25, 15_000, 0, 2_500],
 ] as const;
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -1604,7 +1604,7 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
 
   return <div className="progression-view sl">
     <div className="sl-explain">
-      <div><span>1</span><b>The global line grows</b><p>Level 1 pays at 10 global positions after you; Level 2 pays when position 11 joins. Level 3 and above count members who reached the level below.</p></div>
+      <div><span>1</span><b>The global line grows</b><p>Level 1 pays at 10 global positions after you; Level 2 pays at 25 positions after you. Level 3 and above count members who reached the level below.</p></div>
       <div><span>2</span><b>Invite people yourself</b><p>Each level also needs a few members you referred directly.</p></div>
       <div><span>3</span><b>Unlock a one-time reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
     </div>
