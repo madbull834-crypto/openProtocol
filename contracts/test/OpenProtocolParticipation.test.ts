@@ -204,7 +204,7 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
     // The 60 USDT of entries were held in the Working reserve, so the level is fully backed.
     expect(await protocol.workingReserve()).to.be.greaterThanOrEqual(24_000_000n);
-    await protocol.connect(genesis).settlePoolRewards();
+    await protocol.connect(genesis).claim();
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -225,7 +225,7 @@ describe("OpenProtocolParticipation", function () {
     // 6 (Level 1) + 15 (Level 2) + 15 × 1 USDT Upline 1 shares from its directs' Level 1.
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(36_000_000n);
     expect(await protocol.singleLegReserve()).to.equal(270_000_000n); // 30 × 9
-    await protocol.connect(genesis).settlePoolRewards();
+    await protocol.connect(genesis).claim();
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -235,17 +235,18 @@ describe("OpenProtocolParticipation", function () {
     await protocol.connect(alice).register(genesis.address);
     await protocol.connect(bob).register(genesis.address);
     await protocol.connect(carol).register(genesis.address);
-    const gross = await protocol.claimable(genesis.address);
-    expect(gross).to.equal(24_000_000n); // bob and carol; alice was reserved
-    // 15% royalty = 3.6 USDT, 3% (0.72) per club. Only the 1 Star club has members;
-    // the four empty clubs forward 2.88 USDT to the vault.
+    const credited = await protocol.claimable(genesis.address);
+    expect(credited).to.equal(24_000_000n); // bob and carol; alice was reserved
+    // Claim automatically includes the backed 4 USDT Non-Working reward.
+    const gross = credited + await protocol.pendingNonWorkingPoolIncome(genesis.address);
+    expect(gross).to.equal(28_000_000n);
     await expect(protocol.connect(genesis).claim())
       .to.emit(protocol, "Claimed")
-      .withArgs(genesis.address, gross, 19_200_000n, 3_600_000n, 1_200_000n);
-    expect(await token.balanceOf(genesis.address)).to.equal(19_200_000n);
-    expect(await token.balanceOf(club.address)).to.equal(2_880_000n);
-    expect(await token.balanceOf(development.address)).to.equal(1_200_000n);
-    expect(await protocol.clubLiability()).to.equal(720_000n);
+      .withArgs(genesis.address, gross, 22_400_000n, 4_200_000n, 1_400_000n);
+    expect(await token.balanceOf(genesis.address)).to.equal(22_400_000n);
+    expect(await token.balanceOf(club.address)).to.equal(3_360_000n);
+    expect(await token.balanceOf(development.address)).to.equal(1_400_000n);
+    expect(await protocol.clubLiability()).to.equal(840_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -258,7 +259,10 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.clubMemberCount(1)).to.equal(4);
     expect(await protocol.clubMemberCount(2)).to.equal(1);
 
-    const gross = await protocol.claimable(genesis.address); // 24 USDT from directs 3 and 4
+    const gross = await protocol.claimable(genesis.address)
+      + await protocol.pendingSingleLegIncome(genesis.address)
+      + await protocol.pendingWorkingPoolIncome(genesis.address)
+      + await protocol.pendingNonWorkingPoolIncome(genesis.address);
     await protocol.connect(genesis).claim();
     const clubShare = gross * 300n / 10_000n;
     expect(await protocol.pendingClubReward(alice.address)).to.equal(clubShare / 4n);
@@ -276,9 +280,13 @@ describe("OpenProtocolParticipation", function () {
     await protocol.connect(alice).register(genesis.address);
     await protocol.connect(bob).register(genesis.address);
     await protocol.connect(carol).register(genesis.address);
-    await protocol.connect(genesis).claim(); // 0.72 USDT shared by the 4 one-star members
+    const firstGross = await protocol.claimable(genesis.address)
+      + await protocol.pendingSingleLegIncome(genesis.address)
+      + await protocol.pendingWorkingPoolIncome(genesis.address)
+      + await protocol.pendingNonWorkingPoolIncome(genesis.address);
+    await protocol.connect(genesis).claim();
     const earned = await protocol.pendingClubReward(genesis.address);
-    expect(earned).to.equal(180_000n);
+    expect(earned).to.equal(firstGross * 300n / 10_000n / 4n);
     await protocol.connect(dave).register(genesis.address); // fourth direct -> 2 Star
     expect(await protocol.clubRank(genesis.address)).to.equal(2);
     expect(await protocol.clubMemberCount(1)).to.equal(4); // alice, bob, carol, dave
@@ -307,7 +315,10 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.incomeByReason(genesis.address, direct)).to.equal(24_000_000n);
     expect(await protocol.incomeCountByReason(genesis.address, direct)).to.equal(2);
     expect(await protocol.lifetimeEarned(genesis.address)).to.equal(await protocol.claimable(genesis.address));
-    const before = await protocol.claimable(genesis.address);
+    const before = await protocol.claimable(genesis.address)
+      + await protocol.pendingSingleLegIncome(genesis.address)
+      + await protocol.pendingWorkingPoolIncome(genesis.address)
+      + await protocol.pendingNonWorkingPoolIncome(genesis.address);
     await protocol.connect(genesis).claim();
     expect(await protocol.totalWithdrawnGross(genesis.address)).to.equal(before);
     expect(await protocol.withdrawCount(genesis.address)).to.equal(1);

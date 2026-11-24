@@ -299,6 +299,10 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function claim() external nonReentrant {
+        // Pool rewards that are backed by their reserve and fit inside the member's
+        // rank cap are part of the available balance. Settle them automatically so
+        // members never need a separate "move to balance" transaction.
+        _settlePoolRewards(msg.sender);
         _syncClub(msg.sender);
         _settleClub(msg.sender);
         _settleFiveStar(msg.sender);
@@ -364,22 +368,22 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         address owner = lineOwner[position];
         return owner == address(0) ? memberById[position] : owner;
     }
-    function settlePoolRewards() external nonReentrant {
-        uint256 cap = poolRewardCap(msg.sender);
-        uint256 credited = rankedPoolRewardsCredited[msg.sender];
+    function _settlePoolRewards(address account) private {
+        uint256 cap = poolRewardCap(account);
+        uint256 credited = rankedPoolRewardsCredited[account];
         uint256 capacity = cap == type(uint256).max ? type(uint256).max : cap > credited ? cap - credited : 0;
 
-        uint256 singleAmount = _settleSingleLegBacked(msg.sender, capacity);
+        uint256 singleAmount = _settleSingleLegBacked(account, capacity);
         capacity = capacity == type(uint256).max ? capacity : capacity - singleAmount;
-        uint256 workingAmount = _settleWorkingBacked(pendingWorkingPoolIncome, msg.sender, capacity);
+        uint256 workingAmount = _settleWorkingBacked(pendingWorkingPoolIncome, account, capacity);
         capacity = capacity == type(uint256).max ? capacity : capacity - workingAmount;
-        uint256 nonWorkingAmount = _settleNonWorkingBacked(msg.sender, capacity);
+        uint256 nonWorkingAmount = _settleNonWorkingBacked(account, capacity);
         uint256 total = singleAmount + workingAmount + nonWorkingAmount;
-        rankedPoolRewardsCredited[msg.sender] += total;
-        _credit(msg.sender, singleAmount, keccak256("SINGLE_LEG_INCOME"));
-        _credit(msg.sender, workingAmount, keccak256("WORKING_LEVEL_INCOME"));
-        _credit(msg.sender, nonWorkingAmount, keccak256("NON_WORKING_MATRIX_INCOME"));
-        emit PoolIncomeSettled(msg.sender, singleAmount, workingAmount, nonWorkingAmount);
+        rankedPoolRewardsCredited[account] += total;
+        _credit(account, singleAmount, keccak256("SINGLE_LEG_INCOME"));
+        _credit(account, workingAmount, keccak256("WORKING_LEVEL_INCOME"));
+        _credit(account, nonWorkingAmount, keccak256("NON_WORKING_MATRIX_INCOME"));
+        emit PoolIncomeSettled(account, singleAmount, workingAmount, nonWorkingAmount);
     }
     function poolRewardCap(address account) public view returns (uint256) {
         (, , , uint256 cap) = rankRule(starRank[account] == 0 ? 1 : starRank[account]);

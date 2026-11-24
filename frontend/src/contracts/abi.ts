@@ -8,7 +8,6 @@ export const protocolAbi = [
   { type: "function", name: "getParticipant", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "participant", type: "tuple", components: [{ name: "id", type: "uint64" }, { name: "directCount", type: "uint64" }, { name: "sponsor", type: "address" }, { name: "joinedAt", type: "uint64" }] }] },
   { type: "function", name: "register", stateMutability: "nonpayable", inputs: [{ name: "sponsor", type: "address" }], outputs: [] },
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
-  { type: "function", name: "settlePoolRewards", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "withdrawable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "autoUpgradeCredit", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "claimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },

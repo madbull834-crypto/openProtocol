@@ -498,10 +498,9 @@ const MAX_UINT = 2n ** 256n - 1n;
 type PoolStatus = "empty" | "ready" | "cap" | "reserve";
 
 /**
- * Mirrors `settlePoolRewards()`: each pool is paid in full or not at all, in the order
+ * Mirrors the automatic pool settlement in `claim()`: each pool is paid in full or not at all, in the order
  * Single-Leg → Working → Non-Working, limited by the remaining rank cap and the pool reserve.
  */
-/** Mirrors `settlePoolRewards`: Single-Leg, Working, then Non-Working, each paid in full from its own reserve within the rank cap. */
 function previewSettlement(input: { single?: bigint; working?: bigint; nonWorking?: bigint; cap?: bigint; settled?: bigint; singleLegReserve?: bigint; workingReserve?: bigint; nonWorkingReserve?: bigint }) {
   const cap = input.cap ?? 0n;
   const settled = input.settled ?? 0n;
@@ -581,10 +580,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
   });
   const claim = useWriteContract();
-  const settle = useWriteContract();
   const claimReceipt = useWaitForTransactionReceipt({ hash: claim.data });
-  const settleReceipt = useWaitForTransactionReceipt({ hash: settle.data });
-  useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) rewards.refetch(); }, [claimReceipt.isSuccess, settleReceipt.isSuccess, rewards.refetch]);
+  useEffect(() => { if (claimReceipt.isSuccess) rewards.refetch(); }, [claimReceipt.isSuccess, rewards.refetch]);
   const withdrawable = rewards.data?.[0]?.result as bigint | undefined;
   const team = rewards.data?.[1]?.result as bigint | undefined;
   const working = rewards.data?.[2]?.result as number | undefined;
@@ -639,7 +636,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const accFiveStar = rewards.data?.[43]?.result as bigint | undefined;
   const clubFunds = useClubFunds();
   const pendingRoyalty = pendingFiveStar === undefined && pendingClub === undefined ? undefined : (pendingFiveStar ?? 0n) + (pendingClub ?? 0n) + (heldRoyalty ?? 0n);
-  useEffect(() => { if (claimReceipt.isSuccess || settleReceipt.isSuccess) { void history.refetch(); void indexedHistory.refetch(); } }, [claimReceipt.isSuccess, settleReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (claimReceipt.isSuccess) { void history.refetch(); void indexedHistory.refetch(); } }, [claimReceipt.isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
   void creditedIncome;
   const historyAmount = (reason: string) => history.data ? BigInt(history.data.totals[reason]?.amount ?? "0") : undefined;
 
@@ -658,7 +655,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
   const registered = Boolean(participant?.id);
   const isActive = Number(participant?.directCount ?? 0n) >= rules.activationDirects;
-  const fees = claimFees(withdrawable, rules);
+  const availableBalance = withdrawable === undefined ? undefined : withdrawable + teamIncome.movable;
+  const fees = claimFees(availableBalance, rules);
   const joined = participant?.joinedAt ? new Date(Number(participant.joinedAt) * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—";
   const directCount = Number(participant?.directCount ?? 0n);
   const teamCount = Number(team ?? 0n);
@@ -678,10 +676,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const weekEnds = new Date(Number((currentWeek + 1n) * 7n * 24n * 60n * 60n) * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   const capLabel = rankCapText(rules.ranks[Math.max(1, Math.min(5, currentRank))]);
   const claimBusy = claim.isPending || claimReceipt.isLoading;
-  const settleBusy = settle.isPending || settleReceipt.isLoading;
-  const actionError = txErrorMessage(claim.error, "Withdrawal") ?? txErrorMessage(settle.error, "Settlement");
+  const actionError = txErrorMessage(claim.error, "Withdrawal");
   const doClaim = () => { claim.reset(); claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim", chainId: requiredChainId }); };
-  const doSettle = () => { settle.reset(); settle.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "settlePoolRewards", chainId: requiredChainId }); };
 
   if (!address || !registered) {
     return <motion.div {...fade}>
@@ -707,15 +703,16 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   } as const;
   const visiblePools = teamIncome.pools;
   const nextCapRank = rankNames.findIndex((_, index) => index > currentRank && index <= 5);
-  const statusLabel = (status: PoolStatus) => status === "ready" ? "Ready" : status === "cap" ? "Over cap" : status === "reserve" ? "Awaiting reserve" : "Not started";
+  const statusLabel = (status: PoolStatus) => status === "ready" ? "Available" : status === "cap" ? "Over cap" : status === "reserve" ? "Awaiting reserve" : "Not started";
   const blockedReason = teamIncome.movable > 0n || teamIncome.waiting === 0n ? undefined
     : teamIncome.pools.some(p => p.status === "cap")
       ? `Your ${rankNames[currentRank]} cap allows ${formatToken(teamIncome.capLeft)} USDT more, and each pool is paid out in full or not at all.${nextCapRank > 0 ? ` Reach ${rankNames[nextCapRank]} to raise your cap.` : ""}`
       : "The pool reserve can't cover this yet. It refills as new members join.";
-  const settleLabel = settle.isPending ? "Confirm in wallet…" : settleReceipt.isLoading ? "Settling…" : teamIncome.movable > 0n ? `Move ${formatToken(teamIncome.movable)} USDT to balance` : "Move to balance";
-  const settleDisabled = teamIncome.movable === 0n || settleBusy;
+  const lockedPoolIncome = teamIncome.waiting - teamIncome.movable;
+  const availableRoyalty = royaltyClaimable ? (pendingRoyalty ?? 0n) : 0n;
+  const creditedBalance = (withdrawable ?? 0n) > availableRoyalty ? (withdrawable ?? 0n) - availableRoyalty : 0n;
   const capPercent = teamIncome.unlimited ? 100 : teamIncome.cap ? Math.min(100, Number(teamIncome.settled * 10_000n / teamIncome.cap) / 100) : 0;
-  const portion = (value: bigint) => teamIncome.earned ? Number(value * 10_000n / teamIncome.earned) / 100 : 0;
+  const portion = (value: bigint) => teamIncome.waiting ? Number(value * 10_000n / teamIncome.waiting) / 100 : 0;
   const ring = 2 * Math.PI * 44;
   const streamRows = [
     ...incomeStreams.map(stream => ({ ...stream, amount: historyAmount(stream.reason) ?? 0n, count: history.data?.totals[stream.reason]?.count ?? 0 })),
@@ -727,19 +724,27 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const royaltyLifetime = (historyAmount("FIVE_STAR_ROYALTY") ?? 0n) + (historyAmount("STAR_CLUB_ROYALTY") ?? 0n);
   const royaltyPayments = (history.data?.totals.FIVE_STAR_ROYALTY?.count ?? 0) + (history.data?.totals.STAR_CLUB_ROYALTY?.count ?? 0);
   const royaltyActivity = history.data?.recent.filter(item => item.reason === "FIVE_STAR_ROYALTY" || item.reason === "STAR_CLUB_ROYALTY") ?? [];
+  const allIncome = [
+    { name: "Working Matrix direct", amount: historyAmount("DIRECT_INCOME"), Icon: Users },
+    { name: "Ten-level upline", amount: historyAmount("TEN_LEVEL_UPLINE"), Icon: Layers },
+    { name: "Working Pool", amount: historyAmount("WORKING_LEVEL_INCOME") === undefined ? undefined : (historyAmount("WORKING_LEVEL_INCOME") ?? 0n) + (pendingWorking ?? 0n), Icon: LayoutGrid },
+    { name: "Single-Leg Pool", amount: historyAmount("SINGLE_LEG_INCOME") === undefined ? undefined : (historyAmount("SINGLE_LEG_INCOME") ?? 0n) + (pendingSingleLeg ?? 0n), Icon: TrendingUp },
+    { name: "Non-Working Matrix", amount: historyAmount("NON_WORKING_MATRIX_INCOME") === undefined ? undefined : (historyAmount("NON_WORKING_MATRIX_INCOME") ?? 0n) + (pendingNonWorking ?? 0n), Icon: Network },
+    { name: "Weekly Superstar", amount: historyAmount("WEEKLY_SUPERSTAR"), Icon: Award },
+    { name: "Royalty Club", amount: history.data ? royaltyLifetime + (pendingRoyalty ?? 0n) : undefined, Icon: Crown },
+  ] as const;
+  const allIncomeTotal = history.data ? allIncome.reduce((sum, income) => sum + (income.amount ?? 0n), history.data.earlier) : undefined;
   const teamIncomeCard = <section className="ti">
     <div className="ti-hero">
       <div className="ti-headline">
         <span className="ti-eyebrow"><i/> TEAM INCOME</span>
-        <b className="ti-total">{formatToken(teamIncome.earned)}<em>USDT</em></b>
-        <p>Earned from Single-Leg and the Non-Working Matrix. {teamIncome.waiting > 0n ? <><b>{formatToken(teamIncome.waiting)} USDT</b> is still in reserves.</> : "It appears here as your team reaches new levels."}</p>
+        <b className="ti-total">{formatToken(teamIncome.waiting)}<em>USDT</em></b>
+        <p>Your current Single-Leg, Working and Non-Working income, separated by pool. Eligible amounts are included in Available balance automatically.</p>
         <div className="ti-split" aria-label="Team income breakdown">
           {teamIncome.pools.map(pool => pool.amount > 0n && <i key={pool.key} className={poolInfo[pool.key].tone} style={{ width: `${portion(pool.amount)}%` }}/>)}
-          {teamIncome.settled > 0n && <i className="settled" style={{ width: `${portion(teamIncome.settled)}%` }}/>}
         </div>
         <div className="ti-legend">
           {teamIncome.pools.map(pool => <span key={pool.key}><i className={poolInfo[pool.key].tone}/>{poolInfo[pool.key].name} <b>{formatToken(pool.amount)}</b></span>)}
-          <span><i className="settled"/>In balance <b>{formatToken(teamIncome.settled)}</b></span>
         </div>
       </div>
       <div className="ti-cap">
@@ -761,8 +766,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
     <div className={`ti-action ${teamIncome.movable > 0n ? "ready" : blockedReason ? "locked" : ""}`}>
       <span className="ti-action-icon">{teamIncome.movable > 0n ? <Zap size={17}/> : blockedReason ? <Lock size={17}/> : <Clock size={17}/>}</span>
-      <div><b>{teamIncome.movable > 0n ? `${formatToken(teamIncome.movable)} USDT is ready to move` : blockedReason ? "Team income is locked for now" : "Nothing to move yet"}</b><p>{blockedReason ?? (teamIncome.movable > 0n ? "Move it to your balance, then withdraw to your wallet." : "Your share (80% own, 10% U1, 10% across U2–U9) is added when your team reaches new levels.")}</p></div>
-      <button className="pill" disabled={settleDisabled} onClick={doSettle}>{settleLabel}</button>
+      <div><b>{teamIncome.movable > 0n ? `${formatToken(teamIncome.movable)} USDT is included in Available balance` : blockedReason ? "Team income is locked for now" : "No pending team income"}</b><p>{blockedReason ?? (teamIncome.movable > 0n ? "It will be settled automatically in the same transaction when you withdraw." : "Your share (80% own, 10% U1, 10% across U2–U9) appears here as levels complete.")}</p></div>
     </div>
   </section>;
 
@@ -791,12 +795,15 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-hero-grid">
           <div className="db-balance">
             <div className="db-balance-top"><span>Available balance</span><span className="db-live"><i/> Live</span></div>
-            <b className="db-balance-value">{formatToken(withdrawable)} <em>USDT</em></b>
-            <p className="db-balance-sub">{withdrawable ? <>You receive <b>{formatToken(fees.net)} USDT</b> after the {pct(rules.royaltyBps + rules.developmentBps)} withdrawal fee.</> : "New rewards are added here automatically."}</p>
-            <button className="pill db-withdraw" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claim.isPending ? "Confirm in wallet…" : claimReceipt.isLoading ? "Withdrawing…" : claimReceipt.isSuccess ? "Withdrawn" : "Withdraw to wallet"} {!claimBusy && <ArrowUpRight size={16}/>}</button>
-            <div className="db-pending">
-              <div><small><Clock size={12}/> Team income in pools</small><b>{formatToken(queued)} USDT</b></div>
-              <button className="db-btn" disabled={settleBusy || queued === 0n} onClick={teamIncome.movable > 0n ? doSettle : () => setTab("earnings")}>{teamIncome.movable > 0n || settleBusy ? settleLabel : queued > 0n ? "Why is it locked?" : "Move to balance"}</button>
+            <b className="db-balance-value">{formatToken(availableBalance)} <em>USDT</em></b>
+            <p className="db-balance-sub">{availableBalance ? <>You receive <b>{formatToken(fees.net)} USDT</b> after the {pct(rules.royaltyBps + rules.developmentBps)} withdrawal fee.</> : "New rewards are added here automatically."}</p>
+            <button className="pill db-withdraw" disabled={!availableBalance || claimBusy} onClick={doClaim}>{claim.isPending ? "Confirm in wallet…" : claimReceipt.isLoading ? "Withdrawing…" : claimReceipt.isSuccess ? "Withdrawn" : "Withdraw to wallet"} {!claimBusy && <ArrowUpRight size={16}/>}</button>
+            <div className="db-balance-breakdown">
+              <small>AVAILABLE BALANCE BREAKDOWN</small>
+              <div><span>Direct, upline and credited rewards</span><b>{formatToken(creditedBalance)}</b></div>
+              {teamIncome.pools.map(pool => <div key={pool.key}><span>{poolInfo[pool.key].name} income</span><b>{formatToken(pool.status === "ready" ? pool.amount : 0n)}</b></div>)}
+              <div><span>Royalty Club income</span><b>{formatToken(availableRoyalty)}</b></div>
+              {lockedPoolIncome > 0n && <button className="db-text-btn" onClick={() => setTab("earnings")}><Lock size={12}/> {formatToken(lockedPoolIncome)} USDT pool income is still locked</button>}
             </div>
             {actionError && <p className="db-error">{actionError}</p>}
           </div>
@@ -813,9 +820,30 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           </div>
         </div>
 
+        <section className="db-card all-income">
+          <div className="db-section-head">
+            <div><small>CAPITAL &amp; EARNINGS</small><h3>All income</h3><p>Every income stream is shown separately. Pool figures include income still waiting in that pool.</p></div>
+            <span className="income-verified"><ShieldCheck size={13}/> Verified on-chain</span>
+          </div>
+          <div className="all-income-grid">
+            {allIncome.map(({ name, amount, Icon }) => <article key={name}>
+              <span className="all-income-icon"><Icon size={16}/></span>
+              <small>{name}</small>
+              <b>{amount === undefined ? "—" : formatToken(amount)} <em>USDT</em></b>
+            </article>)}
+            <article className="total">
+              <span className="all-income-icon"><Coins size={16}/></span>
+              <small>Total lifetime income</small>
+              <b>{allIncomeTotal === undefined ? "—" : formatToken(allIncomeTotal)} <em>USDT</em></b>
+            </article>
+          </div>
+        </section>
+
         <div className="db-kpis">
           <article><span className="db-icon"><Users size={17}/></span><small>Direct referrals</small><b>{directCount}</b><em>{isActive ? "Working Matrix income active" : `${rules.activationDirects - directCount} more to activate income`}</em><div className="kpi-bar"><i style={{ width: `${activationProgress}%` }}/></div></article>
-          <article><span className="db-icon"><Network size={17}/></span><small>{topRank ? `Level ${topRule.qualifiedLevel} team` : rankRequirement.label}</small><b>{topRank ? qualifiedAt(topRule.qualifiedLevel).toLocaleString() : rankRequirement.value.toLocaleString()}</b><em>{topRank ? "Five-Star qualification complete" : `${Math.max(0, rankRequirement.target - rankRequirement.value)} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${rankProgress}%` }}/></div></article>
+          {nextRule.qualifiedLevel === 0 && !topRank
+            ? <article><span className="db-icon"><Network size={17}/></span><small>Total team</small><b>{teamCount.toLocaleString()}</b><em>{directCount.toLocaleString()} direct · {Math.max(0, teamCount - directCount).toLocaleString()} indirect</em><div className="kpi-bar"><i style={{ width: `${teamCount > 0 ? 100 : 0}%` }}/></div></article>
+            : <article><span className="db-icon"><Network size={17}/></span><small>{topRank ? `Level ${topRule.qualifiedLevel} team` : rankRequirement.label}</small><b>{topRank ? qualifiedAt(topRule.qualifiedLevel).toLocaleString() : rankRequirement.value.toLocaleString()}</b><em>{topRank ? "Five-Star qualification complete" : `${Math.max(0, rankRequirement.target - rankRequirement.value)} more for ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${rankProgress}%` }}/></div></article>}
           <article><span className="db-icon"><Award size={17}/></span><small>Current rank</small><b>{rankNames[currentRank]}</b><em>{topRank ? "Highest rank" : `${Math.round(rankProgress)}% to ${rankNames[nextRank]}`}</em><div className="kpi-bar"><i style={{ width: `${rankProgress}%` }}/></div></article>
           <article className="clickable" onClick={() => setTab("earnings")}><span className="db-icon"><Layers size={17}/></span><small>Matrix income</small><b>{formatToken(teamIncome.earned)}<i> USDT</i></b><em>Single-Leg {singleLeg ?? 0}/10 · {singleLegEntries?.toString() ?? 1} entries</em><div className="kpi-bar"><i style={{ width: `${(singleLeg ?? 0) / 10 * 100}%` }}/></div></article>
         </div>
@@ -880,8 +908,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           <div className="db-card">
             <div className="db-section-head"><div><small>EARNINGS SNAPSHOT</small><h3>Where your rewards are</h3></div><button className="db-text-btn" onClick={() => setTab("earnings")}>Details <ChevronRight size={14}/></button></div>
             <ul className="db-rows db-snap">
-              <li><span><em className="snap-icon green"><Wallet size={14}/></em>Available to withdraw</span><b>{formatToken(withdrawable)} <small>USDT</small></b></li>
-              <li><span><em className="snap-icon blue"><Layers size={14}/></em>Team income in pools</span><b>{formatToken(queued)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon green"><Wallet size={14}/></em>Available to withdraw</span><b>{formatToken(availableBalance)} <small>USDT</small></b></li>
+              <li><span><em className="snap-icon blue"><Layers size={14}/></em>Pool income included</span><b>{formatToken(teamIncome.movable)} <small>USDT</small></b></li>
               <li><span><em className="snap-icon purple"><Award size={14}/></em>Royalty Club income</span><b>{formatToken(pendingRoyalty)} <small>USDT</small></b></li>
             </ul>
             <div className="db-placement"><span>Your team</span><b>{team === undefined ? "—" : teamCount.toLocaleString()} members</b><button className="db-text-btn" onClick={() => setTab("network")}>View network <ChevronRight size={14}/></button></div>
@@ -925,8 +953,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "earnings" && <div className="db-stack">
         <div className="db-summary">
-          <div className="primary"><span className="db-sum-icon"><Wallet size={16}/></span><small>Available to withdraw</small><b>{formatToken(withdrawable)} <em>USDT</em></b><span>You receive {formatToken(fees.net)} USDT after fees</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
-          <div><span className="db-sum-icon"><Layers size={16}/></span><small>Team income in pools</small><b>{formatToken(queued)} <em>USDT</em></b><span>{teamIncome.movable > 0n ? `${formatToken(teamIncome.movable)} USDT can move to your balance now` : queued > 0n ? "Locked. See the Team income card below." : "Grows as your team grows"}</span><button className="db-btn" disabled={settleDisabled} onClick={doSettle}>{settleLabel}</button></div>
+          <div className="primary"><span className="db-sum-icon"><Wallet size={16}/></span><small>Available to withdraw</small><b>{formatToken(availableBalance)} <em>USDT</em></b><span>You receive {formatToken(fees.net)} USDT after fees</span><button className="pill" disabled={!availableBalance || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
+          <div><span className="db-sum-icon"><Layers size={16}/></span><small>Pool income included</small><b>{formatToken(teamIncome.movable)} <em>USDT</em></b><span>{lockedPoolIncome > 0n ? `${formatToken(lockedPoolIncome)} USDT remains locked by its reserve or rank cap` : "Single-Leg, Working and Non-Working are added automatically"}</span></div>
           <div><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime earned</small><b>{history.data ? formatToken(BigInt(history.data.lifetimeCredited)) : "—"} <em>USDT</em></b><span>{history.data ? `${formatToken(BigInt(history.data.claims.net))} USDT received in ${history.data.claims.count} ${history.data.claims.count === 1 ? "withdrawal" : "withdrawals"}` : "History service unavailable"}</span></div>
         </div>
         {actionError && <p className="db-error">{actionError}</p>}
@@ -947,7 +975,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
             </div>
           </li>; })}</ul>}
           {history.data && idleStreams.length > 0 && <div className="src-idle"><small>NOT EARNED YET</small><div>{idleStreams.map(({ reason, name }) => { const Icon = streamIcon(reason); return <span key={reason} title={incomeStreams.find(x => x.reason === reason)?.note}><Icon size={13}/> {name}</span>; })}</div></div>}
-          {queued > 0n && <p className="db-foot-note">Plus {formatToken(queued)} USDT of team income still in pools. It's counted here once it moves to your balance.</p>}
+          {lockedPoolIncome > 0n && <p className="db-foot-note">{formatToken(lockedPoolIncome)} USDT of pool income is not yet available because of its reserve or your rank cap.</p>}
           {!isActive && <p className="db-foot-note">Direct and ten-level upline income start once you have 2 direct referrals.{heldForUpgrade ? ` ${formatToken(heldForUpgrade)} USDT has been redirected to the pool reserve so far.` : ""}</p>}
         </div>
 
@@ -960,7 +988,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <li><span><i className="club"/>Star clubs · {pct(rules.royaltyBps)}</span><b>{formatToken(fees.royalty)} USDT</b></li>
               <li><span><i className="dev"/>Development fund · {pct(rules.developmentBps)}</span><b>{formatToken(fees.development)} USDT</b></li>
             </ul>
-            <div className="fee-total"><span>Next withdrawal</span><b>{formatToken(withdrawable)} <em>USDT</em></b></div>
+            <div className="fee-total"><span>Next withdrawal</span><b>{formatToken(availableBalance)} <em>USDT</em></b></div>
             {history.data && history.data.claims.count > 0 && <p className="db-foot-note">So far you've withdrawn {formatToken(BigInt(history.data.claims.gross))} USDT and received {formatToken(BigInt(history.data.claims.net))} USDT.</p>}
           </div>
           <div className="db-card db-club">
@@ -995,7 +1023,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
 
       {tab === "royalty" && <div className="db-stack">
         <div className="db-summary">
-          <div className="primary"><span className="db-sum-icon"><Crown size={16}/></span><small>Royalty income waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b><span>Your live, unsettled share of the {rankNames[currentRank]} club</span><button className="pill" disabled={!withdrawable || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
+          <div className="primary"><span className="db-sum-icon"><Crown size={16}/></span><small>Royalty income waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b><span>Your live, unsettled share of the {rankNames[currentRank]} club</span><button className="pill" disabled={!availableBalance || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button></div>
           <div><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime royalty income</small><b>{history.data ? formatToken(royaltyLifetime) : "—"} <em>USDT</em></b><span>{history.data ? `${royaltyPayments} credited ${royaltyPayments === 1 ? "payment" : "payments"}` : "History service unavailable"}</span></div>
           <div><span className="db-sum-icon"><Award size={16}/></span><small>Members sharing your club</small><b>{currentRank >= 1 ? clubMembers[currentRank - 1]?.toLocaleString() ?? "—" : "—"}</b><span>{currentRank >= 5 ? `Your weight: ${fiveStarWeight?.toString() ?? "—"} · +1 per extra 1,000 team members` : "Your club's 3% is split equally among these members"}</span></div>
         </div>
@@ -1023,7 +1051,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
                 {state === "current" && <div className="club-claim">
                   <small>Your share waiting</small><b>{formatToken(pendingRoyalty)} <em>USDT</em></b>
                   <span>{royaltyClaimable === false ? `Held until you have ${rules.clubClaimDirects[rank]} directs (you have ${directCount})` : "Claimable — paid with your next withdrawal"}</span>
-                  <button className="pill" disabled={!withdrawable || claimBusy || royaltyClaimable === false} onClick={event => { event.stopPropagation(); doClaim(); }}>{claimBusy ? "Withdrawing…" : "Claim with withdrawal"}</button>
+                  <button className="pill" disabled={!availableBalance || claimBusy || royaltyClaimable === false} onClick={event => { event.stopPropagation(); doClaim(); }}>{claimBusy ? "Withdrawing…" : "Claim with withdrawal"}</button>
                 </div>}
               </div>
             </div>;
@@ -1085,7 +1113,15 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         </div>
       </div>}
 
-      {tab === "ledger" && <IncomeLedger address={address} lifetime={history.data ? BigInt(history.data.lifetimeCredited) : undefined} withdrawn={history.data?.withdrawnGross} withdrawals={history.data?.claims.count} balance={withdrawable} queued={queued} initialReason={ledgerReason}/>}
+      {tab === "ledger" && <IncomeLedger
+        address={address}
+        lifetime={history.data ? BigInt(history.data.lifetimeCredited) : undefined}
+        withdrawn={history.data?.withdrawnGross}
+        withdrawals={history.data?.claims.count}
+        balance={availableBalance}
+        lockedPool={lockedPoolIncome}
+        initialReason={ledgerReason}
+      />}
     </div></section>
   </motion.div>;
 }
@@ -1173,7 +1209,7 @@ function StreamEntries({ address, reason, onViewAll }: { address: Address; reaso
         </span>
         <a className="src-tx" href={`${explorerUrl}/tx/${item.txHash}`} target="_blank" rel="noreferrer"><ExternalLink size={11}/></a>
       </li>)}</ul>}
-      <p className="db-foot-note">These are queued into your pool as levels are reached, then paid to your balance when you move team income (below).</p>
+      <p className="db-foot-note">These rewards are recorded as levels are reached. Backed amounts within your rank cap are included in Available balance automatically.</p>
     </div>}
     {pool && <small className="src-sub">MOVED TO YOUR BALANCE</small>}
     {ledger.isLoading && <p className="db-foot-note">Loading payments…</p>}
@@ -1189,7 +1225,7 @@ function StreamEntries({ address, reason, onViewAll }: { address: Address; reaso
 }
 
 /** Every income credit and withdrawal, newest first. Totals come from the contract; entries from its events. */
-function IncomeLedger({ address, lifetime, withdrawn, withdrawals, balance, queued, initialReason }: { address: Address; lifetime?: bigint; withdrawn?: bigint; withdrawals?: number; balance?: bigint; queued: bigint; initialReason?: string }) {
+function IncomeLedger({ address, lifetime, withdrawn, withdrawals, balance, lockedPool, initialReason }: { address: Address; lifetime?: bigint; withdrawn?: bigint; withdrawals?: number; balance?: bigint; lockedPool: bigint; initialReason?: string }) {
   const [filter, setFilter] = useState<LedgerFilter>(initialReason ? { kind: "credit", reason: initialReason, page: 1 } : { kind: "all", page: 1 });
   useEffect(() => { if (initialReason) setFilter({ kind: "credit", reason: initialReason, page: 1 }); }, [initialReason]);
   const ledger = useLedger(address, filter);
@@ -1209,7 +1245,7 @@ function IncomeLedger({ address, lifetime, withdrawn, withdrawals, balance, queu
     <div className="db-summary ledger-summary">
       <div className="primary"><span className="db-sum-icon"><TrendingUp size={16}/></span><small>Lifetime earned</small><b>{formatToken(lifetime)} <em>USDT</em></b><span>Every income credited to you</span></div>
       <div><span className="db-sum-icon"><ArrowUpRight size={16}/></span><small>Withdrawn</small><b>{formatToken(withdrawn)} <em>USDT</em></b><span>{withdrawals ?? 0} {withdrawals === 1 ? "withdrawal" : "withdrawals"} (gross)</span></div>
-      <div><span className="db-sum-icon"><Wallet size={16}/></span><small>Balance</small><b>{formatToken(balance)} <em>USDT</em></b><span>{queued > 0n ? `+ ${formatToken(queued)} USDT team income in pools` : "Ready to withdraw"}</span></div>
+      <div><span className="db-sum-icon"><Wallet size={16}/></span><small>Available balance</small><b>{formatToken(balance)} <em>USDT</em></b><span>{lockedPool > 0n ? `${formatToken(lockedPool)} USDT pool income remains locked` : "Ready to withdraw"}</span></div>
     </div>
 
     <div className="db-card ledger-card">
@@ -1605,7 +1641,7 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
     </div>
 
     <div className="sl-bonus"><Users size={16}/><p><b>Bonus for your sponsors.</b> Each time someone you invited (or someone they invited) unlocks a level, you also receive an upline bonus — from {usdt(levels[0].upline)} USDT at level 1 up to {usdt(levels[9].upline)} USDT at level 10. You need at least 2 direct referrals to receive it.</p></div>
-    <p className="tree-disclaimer">Single-Leg rewards are queued as team income. Use “Move to balance” on the Earnings tab to add them to your claimable balance; the amount you can move is limited by your rank cap and the pool reserve.</p>
+    <p className="tree-disclaimer">Single-Leg rewards within your rank cap and backed by the pool reserve are included in Available balance automatically. Any locked amount is shown separately on the Earnings tab.</p>
   </div>;
 }
 
