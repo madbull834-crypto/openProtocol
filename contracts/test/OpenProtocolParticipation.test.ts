@@ -160,7 +160,7 @@ describe("OpenProtocolParticipation", function () {
       2n, 15_000_000n, 30_000_000n, 15_000_000n, 15_000_000n,
     ]);
     expect(await protocol.workingLevelQuote(2)).to.deep.equal([
-      2n, 15_000_000n, 30_000_000n, 30_000_000n, 0n,
+      4n, 15_000_000n, 60_000_000n, 30_000_000n, 30_000_000n,
     ]);
     expect(await protocol.workingLevelQuote(8)).to.deep.equal([
       16n, 960_000_000n, 15_360_000_000n, 1_920_000_000n, 13_440_000_000n,
@@ -191,21 +191,26 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(5);
   });
 
-  it("unlocks Working Level 3 after the second paid entry in Level 2", async function () {
+  it("uses four Working Level 2 entries: two for upgrade and two for distribution", async function () {
     const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     // Level 1 completed by the 2nd direct (its 15 USDT is the upgrade); genesis has no upline to host Level 2.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
-    // Each direct completing Level 1 enters Level 2. The second entry completes Level 2.
-    for (const [index, direct] of [alice, bob].entries()) {
+    // Each direct completing Level 1 enters genesis's Level 2 matrix. It completes at position 4.
+    for (const [index, direct] of [alice, bob, carol, dave].entries()) {
       await addMembers(protocol, token, direct.address, 2);
       expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(index + 1);
-      expect(await protocol.workingLevel(genesis.address)).to.equal(index === 0 ? 1 : 2);
+      expect(await protocol.workingLevel(genesis.address)).to.equal(index < 3 ? 1 : 2);
+      expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(index < 3 ? 0n : 24_000_000n);
     }
-    // Level 2: 2 × 15 = 30 turnover, all 30 funds the auto-upgrade into unlocked Level 3.
+    // Level 2: 4 × 15 = 60 turnover. Positions 1–2 fund the 30 USDT Level 3 upgrade;
+    // positions 3–4 provide the 30 USDT distribution (80% = 24 USDT to genesis).
+    expect(await protocol.workingLevelQuote(2)).to.deep.equal([
+      4n, 15_000_000n, 60_000_000n, 30_000_000n, 30_000_000n,
+    ]);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n); // no distributable after upgrade
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 

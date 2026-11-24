@@ -1372,7 +1372,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   void team;
   // Self-funding matrices: levels come from the contract; a level fills with entries placed in your matrix.
   const currentLevel = contractLevel;
-  const matrixSize = (level: number) => kind === "working" && level === 2 ? 2 : level * 2;
+  const matrixSize = (level: number) => level * 2;
   const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
@@ -1465,7 +1465,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         : kind === "nonworking"
           ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
           : selectedLevel === 2
-            ? <>Working Level 2 completes after its second paid entry. Those two entries fund the automatic upgrade into Level 3, so Level 3 unlocks immediately when position 2 is filled.</>
+            ? <>Working Level 2 completes after four paid entries. Positions 1 and 2 fund the automatic 30 USDT upgrade into Level 3; positions 3 and 4 provide the 30 USDT distribution.</>
             : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
     </div>
 

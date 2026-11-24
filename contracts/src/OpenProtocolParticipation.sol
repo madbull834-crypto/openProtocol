@@ -787,9 +787,10 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 15 * (2 ** (level - 2));
     }
 
-    /// @dev Working Level 2 advances after its second paid entry; other levels retain the published 2×L size.
+    /// @dev Every Working level uses the published 2×L matrix size. At Level 2, positions 1–2
+    /// fund the 30 USDT Level 3 upgrade and positions 3–4 fund the 30 USDT distribution.
     function _workingTeam(uint8 level) private pure returns (uint256) {
-        return level == 2 ? 2 : level * 2;
+        return level * 2;
     }
 
     function _nonWorkingIdAmount(uint8 level) private pure returns (uint256) {
