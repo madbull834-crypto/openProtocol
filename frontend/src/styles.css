@@ -616,8 +616,18 @@ footer{border-top:1px solid rgba(52,95,142,.3);background:#02050b;color:#7185a0;
 .all-income-grid small{overflow:hidden;color:#d8b862;font:700 10px var(--mono);letter-spacing:.08em;text-overflow:ellipsis;text-transform:uppercase;white-space:nowrap}
 .all-income-grid b{font-family:Orbitron,var(--font);font-size:19px;font-variant-numeric:tabular-nums}.all-income-grid b em{color:var(--ink-3);font-family:var(--font);font-size:10px;font-style:normal}
 .all-income-grid article.total{border-color:rgba(50,215,255,.3);background:linear-gradient(145deg,rgba(11,42,62,.62),rgba(9,18,27,.9))}.all-income-grid article.total .all-income-icon{border-color:rgba(50,215,255,.32);color:var(--cyan);background:rgba(50,215,255,.08)}.all-income-grid article.total small{color:var(--cyan)}
+.star-funds-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-top:26px;padding-top:20px;border-top:1px solid rgba(244,186,62,.18)}
+.star-funds-head>div{display:grid;gap:5px}.star-funds-head small{color:var(--gold);font:700 10px var(--mono);letter-spacing:.12em}.star-funds-head b{font-size:14px}.star-funds-head .db-text-btn{flex:none}
+.star-funds-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:12px}
+.star-funds-grid article{display:grid;gap:10px;min-width:0;padding:14px;border:1px solid rgba(244,186,62,.18);border-radius:11px;background:rgba(4,9,14,.72)}
+.star-funds-grid article.current{border-color:rgba(244,186,62,.7);background:radial-gradient(170px 90px at 100% 0,rgba(244,186,62,.16),transparent 72%),rgba(18,15,9,.82);box-shadow:0 0 0 2px rgba(244,186,62,.08)}
+.star-funds-grid article>div{display:flex;align-items:center;gap:7px;min-width:0}.star-funds-grid article>div>span{display:grid;place-items:center;width:26px;height:26px;border-radius:7px;color:var(--gold);background:rgba(244,186,62,.1)}
+.star-funds-grid article>div small{color:#d8b862;font:700 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}.star-funds-grid article>div em{margin-left:auto;padding:3px 5px;border-radius:4px;background:rgba(244,186,62,.15);color:#ffe39a;font-size:8px;font-style:normal;font-weight:800;text-transform:uppercase}
+.star-funds-grid article>b{font-family:Orbitron,var(--font);font-size:18px}.star-funds-grid article>b small{color:var(--ink-3);font-family:var(--font);font-size:9px}
+.star-funds-grid article>p{display:grid;gap:5px}.star-funds-grid article>p span{display:flex;justify-content:space-between;gap:6px;color:var(--ink-3);font-size:9.5px}.star-funds-grid article>p b{color:var(--ink-2);font-weight:700}
 @media(max-width:980px){.all-income-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:640px){.all-income .db-section-head{align-items:stretch;flex-direction:column}.income-verified{align-self:flex-start}.all-income-grid{grid-template-columns:1fr}.all-income-grid article{padding:17px}.all-income-grid b{font-size:21px}}
+@media(max-width:1100px){.star-funds-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:640px){.all-income .db-section-head{align-items:stretch;flex-direction:column}.income-verified{align-self:flex-start}.all-income-grid{grid-template-columns:1fr}.all-income-grid article{padding:17px}.all-income-grid b{font-size:21px}.star-funds-head{align-items:flex-start;flex-direction:column}.star-funds-grid{grid-template-columns:1fr}.star-funds-grid article{padding:16px}.star-funds-grid article>b{font-size:20px}}
 
 .src-list{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:10px}
 .src-list li{display:flex;gap:14px;align-items:flex-start;padding:16px;border-radius:12px;background:rgba(4,11,21,.55);border:1px solid rgba(52,95,142,.32);transition:border-color .2s ease,background .2s ease}

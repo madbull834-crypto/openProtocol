@@ -734,6 +734,12 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
     { name: "Royalty Club", amount: history.data ? royaltyLifetime + (pendingRoyalty ?? 0n) : undefined, Icon: Crown },
   ] as const;
   const allIncomeTotal = history.data ? allIncome.reduce((sum, income) => sum + (income.amount ?? 0n), history.data.earlier) : undefined;
+  const starClubFunds = [1, 2, 3, 4, 5].map(rank => {
+    const fund = clubFunds.data?.find(item => item.rank === rank);
+    const shared = fund ? BigInt(fund.received) : 0n;
+    const toVault = fund ? BigInt(fund.toVault) : 0n;
+    return { rank, fund, shared, toVault, total: shared + toVault };
+  });
   const teamIncomeCard = <section className="ti">
     <div className="ti-hero">
       <div className="ti-headline">
@@ -836,6 +842,14 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <small>Total lifetime income</small>
               <b>{allIncomeTotal === undefined ? "—" : formatToken(allIncomeTotal)} <em>USDT</em></b>
             </article>
+          </div>
+          <div className="star-funds-head"><div><small>1–5 STAR ROYALTY FUNDS</small><b>Every club receives 3% of each withdrawal</b></div><button className="db-text-btn" onClick={() => setTab("royalty")}>Full details <ChevronRight size={14}/></button></div>
+          <div className="star-funds-grid">
+            {starClubFunds.map(({ rank, fund, shared, toVault, total }) => <article key={rank} className={rank === currentRank ? "current" : ""}>
+              <div><span><Award size={14}/></span><small>{rank} Star fund</small>{rank === currentRank && <em>Your club</em>}</div>
+              <b>{fund ? formatToken(total) : "—"} <small>USDT</small></b>
+              <p><span>Shared with members <b>{fund ? formatToken(shared) : "—"}</b></span><span>Empty-club vault <b>{fund ? formatToken(toVault) : "—"}</b></span></p>
+            </article>)}
           </div>
         </section>
 
@@ -1032,7 +1046,7 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         {royaltyClaimable === false && <div className="db-alert"><span><Lock size={18}/></span><div><b>Your club income is held until you have {rules.clubClaimDirects[currentRank]} direct referrals</b><p>You're in the {rankNames[currentRank]} club and keep earning its royalty ({formatToken(pendingRoyalty)} USDT so far). It becomes claimable as soon as you have {rules.clubClaimDirects[currentRank]} directs — you have {directCount}.</p></div></div>}
 
         <div className="db-card">
-          <div className="db-section-head"><div><small>ROYALTY CLUBS</small><h3>All six clubs</h3></div><span className="db-tag">You: {rankNames[currentRank]}{isWeeklyLeader ? " · Superstar" : ""}</span></div>
+          <div className="db-section-head"><div><small>ROYALTY CLUBS</small><h3>All five Star Club funds</h3></div><span className="db-tag">You: {rankNames[currentRank]}{isWeeklyLeader ? " · Superstar" : ""}</span></div>
           <div className="club-grid">{royaltyClubs.filter(club => club.rank !== null).map(club => {
             const rank = club.rank as number;
             const state = rank === currentRank ? "current" : rank < currentRank ? "reached" : "locked";
@@ -1045,7 +1059,8 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <small>{rankRequirementText(rank, rules.ranks[rank])}</small>
               <ul><li><span>Income cap</span><strong>{rankCapText(rules.ranks[rank])}</strong></li><li><span>Royalty pool</span><strong>{pct(rules.royaltyBps / 5n)} royalty</strong></li><li><span>Claim with</span><strong>{rules.clubClaimDirects[rank] === 0 ? "No condition" : `${rules.clubClaimDirects[rank]} directs`}</strong></li><li><span>Members</span><strong>{clubMembers[rank - 1]?.toLocaleString() ?? "—"}</strong></li></ul>
               <div className="club-fund">
-                <div><small>Total fund received</small><b>{fund ? formatToken(BigInt(fund.received)) : "—"} <em>USDT</em></b></div>
+                <div><small>Total fund allocated</small><b>{fund ? formatToken(BigInt(fund.received) + BigInt(fund.toVault)) : "—"} <em>USDT</em></b></div>
+                <div><small>Shared with members</small><b>{fund ? formatToken(BigInt(fund.received)) : "—"} <em>USDT</em></b></div>
                 <div><small>{rank === 5 ? "Per weight so far" : "Per member so far"}</small><b>{formatToken(perMember / 10n ** 24n)} <em>USDT</em></b></div>
                 {fund && BigInt(fund.toVault) > 0n && <span>{formatToken(BigInt(fund.toVault))} USDT went to the vault while the club was empty</span>}
                 {state === "current" && <div className="club-claim">
