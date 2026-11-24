@@ -144,7 +144,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
 
     // ---- Appended in the Non-Working entry upgrade (uses 1 gap slot). ----
     /// @notice Team members (10 levels deep) who entered the Non-Working matrix by reaching Single-Leg Level 1.
-    mapping(address => uint64) public nonWorkingTeamCount;
+    mapping(address => uint64) internal nonWorkingTeamCount; // retired: every member now enters on joining
 
     // ---- Appended in the global Single-Leg line upgrade (uses 6 gap slots). ----
     /// @notice Single-Leg is one global line, first come first served. Each registration and each
@@ -458,6 +458,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _recordTeamGrowth(address account) private {
         for (uint8 depth; depth < MAX_UPLINE && account != address(0); ++depth) {
             uint64 newTeam = ++teamCount[account];
+            _advanceNonWorking(account);
             if (newTeam % 30 == 0) _reenter(account, false);
             _updateRank(account);
             _updateFiveStarWeight(account, newTeam);
@@ -662,12 +663,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
                 && participants[account].directCount >= _singleLegDirects(level)
         ) {
             uint256 ownAmount = _singleLegIncome(level) * tokenUnit;
-            if (primary && level == 1) {
-                // Entering Non-Working: the member's 5 USDT ticket share already funds that pool.
-                nonWorkingEntryCredit[account] = nonWorkingTicketAllocation;
-                emit NonWorkingEntryFunded(account, nonWorkingTicketAllocation);
-                _enterNonWorking(account);
-            } else if (primary && level == 3) {
+            if (primary && level == 3) {
                 singleLegReentries[account]++;
                 singleLegEntries[account]++;
                 reentryPosition[account] = _addToLine(account);
@@ -686,23 +682,11 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         }
     }
 
-    /// @dev Reaching Single-Leg Level 1 enters the Non-Working matrix: the member fills a position for
-    /// each of their 10 uplines, and their own Non-Working levels (already filled by others) catch up.
-    function _enterNonWorking(address member) private {
-        _advanceNonWorking(member);
-        address upline = participants[member].sponsor;
-        for (uint8 depth; depth < MAX_UPLINE && upline != address(0); ++depth) {
-            nonWorkingTeamCount[upline]++;
-            _advanceNonWorking(upline);
-            upline = participants[upline].sponsor;
-        }
-    }
-
-    /// @dev Non-Working level = entered team / 2 (max 15); income is queued only once the member has entered.
+    /// @dev Every member enters the Non-Working matrix on joining (their 5 USDT ticket share funds it), so
+    /// a member's Non-Working team is their whole 10-level team: level = team / 2, max 15. Independent of Single-Leg.
     function _advanceNonWorking(address account) private {
-        if (nonWorkingEntryCredit[account] == 0) return;
-        uint64 entered = nonWorkingTeamCount[account];
-        uint8 newLevel = uint8(entered / 2 > 15 ? 15 : entered / 2);
+        uint64 team = teamCount[account];
+        uint8 newLevel = uint8(team / 2 > 15 ? 15 : team / 2);
         uint8 oldLevel = nonWorkingLevel[account];
         if (newLevel <= oldLevel) return;
         for (uint8 level = oldLevel + 1; level <= newLevel; ++level) _queueNonWorkingLevel(account, level);

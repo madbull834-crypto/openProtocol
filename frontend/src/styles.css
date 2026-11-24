@@ -1129,3 +1129,6 @@ i.dev{background:linear-gradient(90deg,#1477d6,var(--blue))}
 .my-team-table{min-width:820px}
 @media (max-width:720px){.my-team-tools input{margin-left:0;width:100%}}
 .gold{background:#f4ba3e}
+/* Working: the level you upgraded into */
+.pool-level-picker button.unlocked{border-color:rgba(67,232,58,.55);color:#7ee787}
+.pool-matrix-view .pool-table tr.unlocked .pool-status{border:1px solid rgba(67,232,58,.45);background:rgba(67,232,58,.12);color:#7ee787}

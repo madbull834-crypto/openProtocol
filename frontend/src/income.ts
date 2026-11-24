@@ -28,7 +28,7 @@ export const incomeStreams = [
   { reason: "TEN_LEVEL_UPLINE", name: "Working Matrix upline", note: "The 10%, 4%, 2% and 0.5% Working Matrix levels" },
   { reason: "WORKING_LEVEL_INCOME", name: "Working Pool level income", note: "80% of each Working level reached, plus U1–U9 shares from your team" },
   { reason: "SINGLE_LEG_INCOME", name: "Single-Leg income", note: "Net level rewards moved from the Single-Leg reserve" },
-  { reason: "NON_WORKING_MATRIX_INCOME", name: "Non-Working Matrix", note: "Matrix rewards funded by the Level 2 redirect" },
+  { reason: "NON_WORKING_MATRIX_INCOME", name: "Non-Working Matrix", note: "Non-Working levels: a new level every 2 team members, funded by 5 USDT of every ticket" },
   { reason: "REENTRY", name: "Non-Working re-entry", note: "From completed Non-Working Matrix cycles" },
   { reason: "WEEKLY_SUPERSTAR", name: "Weekly Superstar", note: "The accumulated $1 registration fund for the weekly winner" },
   {

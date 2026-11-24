@@ -87,8 +87,8 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.teamCount(genesis.address)).to.equal(4);
     // Working Level 1 = 2 directs; Level 2 needs 4 members at depth 2, and there are none.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
-    // Non-Working fills only with members who reached Single-Leg Level 1; nobody has yet.
-    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0);
+    // Everyone enters Non-Working on joining: a team of 4 is Non-Working Level 2.
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(2);
     expect(await protocol.starRank(genesis.address)).to.equal(2);
     expect(await protocol.starRank(alice.address)).to.equal(1);
   });
@@ -219,18 +219,16 @@ describe("OpenProtocolParticipation", function () {
   it("funds Single-Leg from 9 USDT and Non-Working from 5 USDT of every ticket", async function () {
     const { genesis, protocol, token } = await fixture();
     await addMembers(protocol, token, genesis.address, 10);
-    // Level 1 (10 after you, 1 direct): 11 USDT to the member, who enters the Non-Working matrix.
-    // No redirect: Non-Working is funded 5 USDT per ticket.
+    // Level 1 (10 after you, 1 direct): 11 USDT to the member. Single-Leg and Non-Working are independent;
+    // Non-Working is funded 5 USDT per ticket.
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(11_000_000n);
-    expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
-    expect(await protocol.nonWorkingReserve()).to.equal(50_000_000n);
+    expect(await protocol.nonWorkingReserve()).to.equal(50_000_000n); // 10 tickets × 5
     await addMembers(protocol, token, genesis.address, 14);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1); // 24 after: Level 2 needs 25
     await addMembers(protocol, token, genesis.address, 1);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(26_000_000n);
-    expect(await protocol.nonWorkingEntryCredit(genesis.address)).to.equal(5_000_000n);
     expect(await protocol.singleLegReserve()).to.equal(225_000_000n); // 25 × 9, no redirect
     expect(await protocol.poolRewardCap(genesis.address)).to.equal(150_000_000n); // 2 Star: 5 × 30
     await protocol.connect(genesis).settlePoolRewards();
@@ -372,6 +370,21 @@ describe("OpenProtocolParticipation", function () {
     // 10 after the re-entry position: it reaches Level 1 and pays $11 again.
     expect(await protocol.reentryLevel(genesis.address)).to.equal(1);
     expect((await protocol.pendingSingleLegIncome(genesis.address)) - before).to.equal(11_000_000n);
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("enters every member into Non-Working on joining, independent of Single-Leg", async function () {
+    const { genesis, alice, protocol, token } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(0); // 1 team member
+    await addMembers(protocol, token, alice.address, 1);
+    // Team of 2 (one is two levels down): Non-Working Level 1 -> 80% of (2 × 5 − 5) = 4 USDT.
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(1);
+    expect(await protocol.singleLegLevel(genesis.address)).to.equal(0); // Single-Leg is unrelated
+    expect(await protocol.pendingNonWorkingPoolIncome(genesis.address)).to.equal(4_000_000n);
+    await addMembers(protocol, token, genesis.address, 7);
+    expect(await protocol.nonWorkingLevel(genesis.address)).to.equal(4); // team of 9
+    expect(await protocol.nonWorkingReserve()).to.equal(45_000_000n); // 9 tickets × 5
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
