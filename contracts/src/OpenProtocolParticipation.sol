@@ -418,7 +418,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
     {
         if (level == 0 || level > MAX_WORKING_LEVEL) revert InvalidLevel(level);
-        team = uint256(level) * 2;
+        team = _workingTeam(level);
         idAmount = _workingIdAmount(level) * tokenUnit;
         turnover = team * idAmount;
         autoUpgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
@@ -502,7 +502,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         for (uint8 depth; depth < MAX_WORKING_LEVEL && host != address(0); ++depth) {
             if ((working ? workingLevel[host] : nonWorkingLevel[host]) + 1 == level) {
                 emit LevelEntered(member, host, working, level);
-                if (++matrixFilled[host][working ? level : level + 16] == level * 2) _completeLevel(host, working, level);
+                if (++matrixFilled[host][level] == _workingTeam(level)) _completeLevel(host, true, level);
                 return;
             }
             host = participants[host].sponsor;
@@ -614,7 +614,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
 
     function _queueWorkingLevel(address account, uint8 level) private {
         uint256 idAmount = _workingIdAmount(level) * tokenUnit;
-        uint256 turnover = uint256(level * 2) * idAmount;
+        uint256 turnover = _workingTeam(level) * idAmount;
         uint256 upgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
         workingAutoUpgradeConsumed += upgrade;
         uint256 distributable = turnover - upgrade;
@@ -676,15 +676,15 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (reentry != 0) _processPosition(reentry);
     }
     /// @dev Checks every position whose team (positions after it) has just reached a level's size.
-    /// @dev Level 1 counts every position after yours; Level L (L >= 2) counts positions after yours that
-    /// reached Level L-1. That count never shrinks and is larger for earlier positions, so each level keeps a
+    /// @dev Levels 1 and 2 count every global position after yours; Level L (L >= 3) counts positions after
+    /// yours that reached Level L-1. That count never shrinks and is larger for earlier positions, so each level keeps a
     /// cursor: every position before lineCursor[L] already has enough qualified members after it.
     function _sweepLine() private {
         for (uint8 level = 1; level <= 10; ++level) {
             for (;;) {
                 uint64 position = _cursor(level);
                 if (position > lineLength) break;
-                uint64 qualified = level == 1 ? lineLength - position
+                uint64 qualified = level <= 2 ? lineLength - position
                     : singleLegReached[level - 1] - singleLegBehind[level] - (_levelOf(position) >= level - 1 ? 1 : 0);
                 if (qualified < _singleLegMembers(level)) break;
                 lineCursor[level] = position + 1;
@@ -787,16 +787,21 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         return 15 * (2 ** (level - 2));
     }
 
+    /// @dev Working Level 2 advances after its second paid entry; other levels retain the published 2×L size.
+    function _workingTeam(uint8 level) private pure returns (uint256) {
+        return level == 2 ? 2 : level * 2;
+    }
+
     function _nonWorkingIdAmount(uint8 level) private pure returns (uint256) {
         if (level <= 2) return 5;
         return 5 * (2 ** (level - 2));
     }
 
-    /// @dev Members needed after your position (Team column): Level 1 counts everyone after you; Level L
+    /// @dev Members needed after your position: Levels 1 and 2 use the global line count; Level L >= 3
     /// counts those who reached Level L-1.
     function _singleLegMembers(uint8 level) private pure returns (uint64) {
         if (level == 1) return 10;
-        if (level == 2) return 15;
+        if (level == 2) return 11;
         if (level == 3) return 30;
         if (level == 4) return 60;
         if (level == 5) return 250;

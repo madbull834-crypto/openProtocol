@@ -889,8 +889,9 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
           const prevMembers = level === 0 ? 0 : SINGLE_LEG_TABLE[level - 1][0];
           // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
           void prevMembers;
-          const met = level === 0 ? (slTeam ?? 0) >= nextMembers : Boolean(singleLegLine.data?.metAt[level + 1]);
-          const counted = level === 0 ? (slTeam ?? 0) : met ? nextMembers : 0;
+          const usesGlobalCount = level <= 1;
+          const met = usesGlobalCount ? (slTeam ?? 0) >= nextMembers : Boolean(singleLegLine.data?.metAt[level + 1]);
+          const counted = usesGlobalCount ? (slTeam ?? 0) : met ? nextMembers : 0;
           const progress = done ? 100 : Math.min(100, counted / nextMembers * 100);
           return <div className="db-card single-leg-card">
             <div className="db-section-head"><div><small>SINGLE-LEG POOL</small><h3>Single-Leg team</h3></div><button className="db-text-btn" onClick={() => setTab("network")}>View <ChevronRight size={14}/></button></div>
@@ -1371,6 +1372,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
   void team;
   // Self-funding matrices: levels come from the contract; a level fills with entries placed in your matrix.
   const currentLevel = contractLevel;
+  const matrixSize = (level: number) => kind === "working" && level === 2 ? 2 : level * 2;
   const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
@@ -1386,10 +1388,10 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
     query: { enabled: Boolean(protocolAddress && address), refetchInterval: 15_000 },
   });
   const quote = quotes[selectedLevel - 1];
-  const required = Number(quote?.[0] ?? BigInt(selectedLevel * 2));
+  const required = Number(quote?.[0] ?? BigInt(matrixSize(selectedLevel)));
   /** Filled positions: all of a completed level, the live count for the level you are filling, none above. */
   const filledAt = (level: number) => {
-    const size = level * 2;
+    const size = matrixSize(level);
     if (currentLevel >= level) return size;
     if (level !== currentLevel + 1) return 0;
     if (kind === "working" && level === 1) return Math.min(directs.length, size);
@@ -1462,7 +1464,9 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         ? <>Level 1 holds your direct referrals. Your 1st direct pays you; your 2nd direct's ID amount is your auto-upgrade into Level 2; every direct after that pays you again.</>
         : kind === "nonworking"
           ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
-          : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
+          : selectedLevel === 2
+            ? <>Working Level 2 completes after its second paid entry. Those two entries fund the automatic upgrade into Level 3, so Level 3 unlocks immediately when position 2 is filled.</>
+            : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
     </div>
 
     <div className="pool-economics">
@@ -1477,7 +1481,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
           const rowState = levelState(level);
           return <tr key={level} className={`${selectedLevel === level ? "selected" : ""} ${rowState}`} onClick={() => setSelectedLevel(level)} tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") setSelectedLevel(level); }}>
             <td data-label="Level"><span className="pool-td-level">Level </span>{level}</td>
-            <td data-label="Team">{Number(row?.[0] ?? BigInt(level * 2))}</td>
+            <td data-label="Team">{Number(row?.[0] ?? BigInt(matrixSize(level)))}</td>
             <td data-label="ID amount" className="num">{dollars(row?.[1])}</td>
             <td data-label="Turnover" className="num">{dollars(row?.[2])}</td>
             <td data-label="Auto upgrade" className="num">{dollars(row?.[3])}</td>
@@ -1556,7 +1560,7 @@ function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reent
 
 /** Published Single-Leg table, used until the contract's `singleLegQuote` reads arrive. Whole USDT. */
 const SINGLE_LEG_TABLE = [
-  [10, 1, 6, 0, 1], [15, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
+  [10, 1, 6, 0, 1], [11, 2, 15, 0, 2], [30, 3, 35, 9, 3], [60, 5, 50, 0, 5], [250, 8, 150, 0, 10],
   [600, 11, 500, 0, 30], [1_000, 14, 1_500, 0, 100], [1_500, 17, 3_500, 0, 400], [2_500, 21, 10_000, 0, 1_000], [3_700, 25, 15_000, 0, 2_500],
 ] as const;
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -1579,10 +1583,11 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
   const directValue = Number(directs ?? 0n);
   const done = currentLevel ?? 0;
   const next = levels[done];
-  // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
-  const nextMet = next ? (next.level === 1 ? teamValue >= next.members : Boolean(line?.metAt[next.level])) : true;
-  const countedTeam = !next ? 0 : next.level === 1 ? teamValue : nextMet ? next.members : 0;
-  const teamLabel = !next || next.level === 1 ? "Joined after you" : `After you at Level ${next.level - 1}+`;
+  // Levels 1 and 2 use the global count after your position; Level 3+ counts qualified positions.
+  const usesGlobalCount = Boolean(next && next.level <= 2);
+  const nextMet = next ? (usesGlobalCount ? teamValue >= next.members : Boolean(line?.metAt[next.level])) : true;
+  const countedTeam = !next ? 0 : usesGlobalCount ? teamValue : nextMet ? next.members : 0;
+  const teamLabel = !next || usesGlobalCount ? "Global positions after you" : `After you at Level ${next.level - 1}+`;
   const netReward = (level: typeof levels[number]) => level.income;
   const allocationNote = (level: typeof levels[number]) => level.extra === 0 ? undefined : level.level === 1 ? `${usdt(level.extra)} USDT → Global pool` : `${usdt(level.extra)} USDT → 1-time re-entry`;
   const earned = levels.slice(0, done).reduce((sum, level) => sum + netReward(level), 0);
@@ -1590,7 +1595,7 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
   const teamLeft = next ? Math.max(0, next.members - countedTeam) : 0;
   const directsLeft = next ? Math.max(0, next.directs - directValue) : 0;
   const todo = [
-    teamLeft > 0 && (next?.level === 1
+    teamLeft > 0 && ((next?.level ?? 1) <= 2
       ? `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "person" : "people"} to join the platform after you`
       : `have ${next?.members.toLocaleString()} people after you reach Single-Leg Level ${(next?.level ?? 2) - 1}`),
     directsLeft > 0 && `personally invite ${directsLeft} more ${directsLeft === 1 ? "person" : "people"}`,
@@ -1599,7 +1604,7 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
 
   return <div className="progression-view sl">
     <div className="sl-explain">
-      <div><span>1</span><b>The line grows</b><p>Level 1 counts everyone who joins after you. Each higher level counts people after you who reached the level below.</p></div>
+      <div><span>1</span><b>The global line grows</b><p>Level 1 pays at 10 global positions after you; Level 2 pays when position 11 joins. Level 3 and above count members who reached the level below.</p></div>
       <div><span>2</span><b>Invite people yourself</b><p>Each level also needs a few members you referred directly.</p></div>
       <div><span>3</span><b>Unlock a one-time reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
     </div>

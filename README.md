@@ -74,7 +74,7 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 | | Address |
 |---|---|
 | Protocol proxy (use this everywhere) | `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72` |
-| Implementation | `0x737C61290fD1E51A82F0C1c1151a5c597b51d429` |
+| Implementation | `0x98A730E4725f7aAc622737c442817315527b2058` |
 | Deployment block (`INDEXER_START_BLOCK`) | `144594547` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |

@@ -146,7 +146,7 @@ describe("OpenProtocolParticipation", function () {
       10n, 1n, 6_000_000n, 0n, 1_000_000n, 1_000_000n,
     ]);
     expect(await protocol.singleLegQuote(2)).to.deep.equal([
-      15n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
+      11n, 2n, 15_000_000n, 0n, 2_000_000n, 2_000_000n,
     ]);
     expect(await protocol.singleLegQuote(3)).to.deep.equal([
       30n, 3n, 35_000_000n, 9_000_000n, 3_000_000n, 3_000_000n,
@@ -158,6 +158,9 @@ describe("OpenProtocolParticipation", function () {
     // Working Pool table (programme pp. 16–17): 15 levels, Level 8 now auto-upgrades into Level 9.
     expect(await protocol.workingLevelQuote(1)).to.deep.equal([
       2n, 15_000_000n, 30_000_000n, 15_000_000n, 15_000_000n,
+    ]);
+    expect(await protocol.workingLevelQuote(2)).to.deep.equal([
+      2n, 15_000_000n, 30_000_000n, 30_000_000n, 0n,
     ]);
     expect(await protocol.workingLevelQuote(8)).to.deep.equal([
       16n, 960_000_000n, 15_360_000_000n, 1_920_000_000n, 13_440_000_000n,
@@ -188,43 +191,36 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(5);
   });
 
-  it("fills each Working level with entries that paid its ID amount (self-funding)", async function () {
+  it("unlocks Working Level 3 after the second paid entry in Level 2", async function () {
     const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     // Level 1 completed by the 2nd direct (its 15 USDT is the upgrade); genesis has no upline to host Level 2.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
-    // Each direct completing Level 1 enters Level 2 and fills one of genesis's 4 Level 2 positions.
-    for (const [index, direct] of [alice, bob, carol, dave].entries()) {
+    // Each direct completing Level 1 enters Level 2. The second entry completes Level 2.
+    for (const [index, direct] of [alice, bob].entries()) {
       await addMembers(protocol, token, direct.address, 2);
       expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(index + 1);
+      expect(await protocol.workingLevel(genesis.address)).to.equal(index === 0 ? 1 : 2);
     }
-    // Level 2: 4 × 15 = 60 turnover, 30 auto-upgrade into Level 3, 80% of 30 = 24 USDT to genesis.
+    // Level 2: 2 × 15 = 30 turnover, all 30 funds the auto-upgrade into unlocked Level 3.
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
-    // The 60 USDT of entries were held in the Working reserve, so the level is fully backed.
-    expect(await protocol.workingReserve()).to.be.greaterThanOrEqual(24_000_000n);
-    await protocol.connect(genesis).claim();
-    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n); // no distributable after upgrade
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
   it("funds Single-Leg from 9 USDT and Non-Working from 5 USDT of every ticket", async function () {
     const { genesis, protocol, token } = await fixture();
-    const directs = await addMembers(protocol, token, genesis.address, 15);
+    await addMembers(protocol, token, genesis.address, 10);
     // Level 1 (10 after you, 1 direct): 6 USDT. Single-Leg and Non-Working are independent.
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(6_000_000n);
-    expect(await protocol.nonWorkingReserve()).to.equal(75_000_000n); // 15 tickets × 5
-    // Level 2 counts people after you who reached Level 1: none yet (they have no directs).
-    expect(await protocol.singleLegLevel(genesis.address)).to.equal(1);
-    for (const direct of directs) await addMembers(protocol, token, direct.address, 1);
-    // Each of the 15 directs now has 1 direct and 10+ after them: Level 1. That is 15 qualified -> Level 2.
-    expect(await protocol.singleLegReached(1)).to.equal(16);
+    expect(await protocol.nonWorkingReserve()).to.equal(50_000_000n); // 10 tickets × 5
+    // The 11th global position after genesis pays Level 2; genesis already has the required 2 directs.
+    await addMembers(protocol, token, genesis.address, 1);
     expect(await protocol.singleLegLevel(genesis.address)).to.equal(2);
-    // 6 (Level 1) + 15 (Level 2) + 15 × 1 USDT Upline 1 shares from its directs' Level 1.
-    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(36_000_000n);
-    expect(await protocol.singleLegReserve()).to.equal(270_000_000n); // 30 × 9
+    expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(21_000_000n); // 6 + 15
+    expect(await protocol.singleLegReserve()).to.equal(99_000_000n); // 11 × 9
     await protocol.connect(genesis).claim();
     expect(await protocol.pendingSingleLegIncome(genesis.address)).to.equal(0);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
