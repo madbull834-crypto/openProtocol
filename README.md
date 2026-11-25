@@ -84,7 +84,7 @@ Fresh deployment on 2026-11-25 with the 30 USDT ticket (15 Working, 5 Non-Workin
 `INDEXER_START_BLOCK=144709726`. When switching an existing server from a previous proxy, including `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72`, clear the indexed tables before restarting the indexer:
 
 ```sql
-TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "BlockCheckpoint" RESTART IDENTITY;
+TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "ClubRoyalty", "BlockCheckpoint" RESTART IDENTITY;
 ```
 
 ### Previous proxy history (`0x0f89BF511e1e67fC842ed3967D81E824d3f96E72`)
