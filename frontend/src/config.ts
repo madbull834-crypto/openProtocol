@@ -7,7 +7,7 @@ import { getAddress, isAddress, type Address } from "viem";
 export const chainId = Number(import.meta.env.VITE_CHAIN_ID ?? 97);
 export const selectedChain = chainId === 56 ? bsc : bscTestnet;
 const suppliedProtocolAddress = import.meta.env.VITE_PROTOCOL_ADDRESS?.trim();
-const defaultTestProtocol = chainId === 97 ? "0x0f89BF511e1e67fC842ed3967D81E824d3f96E72" : undefined;
+const defaultTestProtocol = chainId === 97 ? "0xaDcA8CcdC6B8C945F0bB3aE86f347ef23C569205" : undefined;
 const configuredAddress = suppliedProtocolAddress || defaultTestProtocol;
 export const deploymentError = suppliedProtocolAddress && !isAddress(suppliedProtocolAddress)
   ? "VITE_PROTOCOL_ADDRESS is not a valid EVM contract address."
