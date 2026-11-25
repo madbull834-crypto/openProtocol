@@ -103,7 +103,7 @@ describe("OpenProtocolParticipation", function () {
       expect(await protocol.starRank(genesis.address)).to.equal(index === 3 ? 3 : 2);
     }
     expect((await protocol.getLevelTeamCounts(genesis.address)).slice(0, 2)).to.deep.equal([4n, 16n]);
-    expect(await protocol.rankRule(4)).to.deep.equal([0n, 3n, 64n, 30_000_000n * 50n]);
+    expect(await protocol.poolRewardCap(genesis.address)).to.equal(30_000_000n * 10n);
     // Each direct has 4 directs of its own, so they are 2 Star.
     expect(await protocol.starRank(directs[0].address)).to.equal(2);
   });
@@ -155,29 +155,9 @@ describe("OpenProtocolParticipation", function () {
     const totals = [];
     for (let level = 1; level <= 10; level++) totals.push((await protocol.singleLegQuote(level)).directs);
     expect(totals).to.deep.equal([1n, 2n, 3n, 5n, 8n, 11n, 14n, 17n, 21n, 25n]);
-    // Working Pool table (programme pp. 16–17): 15 levels, Level 8 now auto-upgrades into Level 9.
-    expect(await protocol.workingLevelQuote(1)).to.deep.equal([
-      2n, 15_000_000n, 30_000_000n, 15_000_000n, 15_000_000n,
-    ]);
-    expect(await protocol.workingLevelQuote(2)).to.deep.equal([
-      4n, 15_000_000n, 60_000_000n, 30_000_000n, 30_000_000n,
-    ]);
-    expect(await protocol.workingLevelQuote(8)).to.deep.equal([
-      16n, 960_000_000n, 15_360_000_000n, 1_920_000_000n, 13_440_000_000n,
-    ]);
-    expect(await protocol.workingLevelQuote(15)).to.deep.equal([
-      30n, 122_880_000_000n, 3_686_400_000_000n, 0n, 3_686_400_000_000n,
-    ]);
-    await expect(protocol.workingLevelQuote(16)).to.be.revertedWithCustomError(protocol, "InvalidLevel");
-    expect(await protocol.nonWorkingLevelQuote(15)).to.deep.equal([
-      30n, 40_960_000_000n, 1_228_800_000_000n, 0n, 1_228_800_000_000n,
-    ]);
     expect(await protocol.singleLegQuote(10)).to.deep.equal([
       3_700n, 25n, 15_000_000_000n, 0n, 2_500_000_000n, 2_500_000_000n,
     ]);
-    const bps = [];
-    for (let level = 1; level <= 9; level++) bps.push(await protocol.tenLevelPercentageBps(level));
-    expect(bps).to.deep.equal([1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n]);
   });
 
   it("uses the Single-Leg direct requirements from the published table", async function () {
@@ -197,18 +177,18 @@ describe("OpenProtocolParticipation", function () {
     // Level 1 completed by the 2nd direct (its 15 USDT is the upgrade); genesis has no upline to host Level 2.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
-    // Each direct completing Level 1 enters genesis's Level 2 matrix. It completes at position 4.
+    // Each direct completing Level 1 enters genesis's Level 2 matrix. Position 3 immediately queues
+    // its 12 USDT member share; position 4 queues another 12 USDT and completes the level.
     for (const [index, direct] of [alice, bob, carol, dave].entries()) {
       await addMembers(protocol, token, direct.address, 2);
       expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(index + 1);
       expect(await protocol.workingLevel(genesis.address)).to.equal(index < 3 ? 1 : 2);
-      expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(index < 3 ? 0n : 24_000_000n);
+      expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(
+        index < 2 ? 0n : index === 2 ? 12_000_000n : 24_000_000n,
+      );
     }
     // Level 2: 4 × 15 = 60 turnover. Positions 1–2 fund the 30 USDT Level 3 upgrade;
     // positions 3–4 provide the 30 USDT distribution (80% = 24 USDT to genesis).
-    expect(await protocol.workingLevelQuote(2)).to.deep.equal([
-      4n, 15_000_000n, 60_000_000n, 30_000_000n, 30_000_000n,
-    ]);
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
@@ -326,20 +306,13 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.totalWithdrawnGross(genesis.address)).to.equal(before);
     expect(await protocol.withdrawCount(genesis.address)).to.equal(1);
     expect(await protocol.lifetimeEarned(genesis.address)).to.equal(before + (await protocol.claimable(genesis.address)));
-    expect(await protocol.directReferralCount(genesis.address)).to.equal(3);
     expect(await protocol.getDirectReferrals(genesis.address, 0, 10)).to.deep.equal([alice.address, bob.address, carol.address]);
     expect(await protocol.getDirectReferrals(genesis.address, 1, 1)).to.deep.equal([bob.address]);
   });
 
-  it("exposes the rank rules the contract itself enforces", async function () {
+  it("exposes the rank caps and constants the contract enforces", async function () {
     const { protocol, ticket } = await fixture();
-    expect(await protocol.rankRule(1)).to.deep.equal([0n, 0n, 0n, ticket * 2n]);
-    expect(await protocol.rankRule(3)).to.deep.equal([0n, 2n, 16n, ticket * 10n]);
-    expect(await protocol.rankRule(5)).to.deep.equal([0n, 4n, 300n, ethers.MaxUint256]);
-    const claimDirects = [];
-    for (let rank = 1; rank <= 5; rank++) claimDirects.push(await protocol.clubClaimDirects(rank));
-    expect(claimDirects).to.deep.equal([0n, 4n, 8n, 12n, 16n]);
-    await expect(protocol.rankRule(6)).to.be.revertedWithCustomError(protocol, "InvalidLevel");
+    expect(await protocol.poolRewardCap(await protocol.memberById(1))).to.equal(ticket * 2n);
     expect(await protocol.SUPERSTAR_MIN_DIRECTS()).to.equal(5);
     expect(await protocol.DIRECT_SHARE_BPS()).to.equal(8_000);
   });
@@ -436,7 +409,7 @@ describe("OpenProtocolParticipation", function () {
 
   it("pays the accumulated 1 USDT registrations to a weekly recruiter with five directs", async function () {
     const { genesis, protocol, token } = await fixture();
-    const week = await protocol.currentWeek();
+    const week = BigInt(Math.floor((await ethers.provider.getBlock("latest"))!.timestamp / (7 * 24 * 60 * 60)));
     await addMembers(protocol, token, genesis.address, 5);
     expect(await protocol.superstarReserve()).to.equal(5_000_000n);
     await ethers.provider.send("evm_increaseTime", [7 * 24 * 60 * 60]);

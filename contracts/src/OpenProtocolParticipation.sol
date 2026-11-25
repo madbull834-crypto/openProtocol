@@ -323,7 +323,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function closeWeek(uint256 week) external nonReentrant {
-        if (week >= currentWeek()) revert WeekNotFinished(week);
+        if (week >= _currentWeek()) revert WeekNotFinished(week);
         WeeklyCompetition storage competition = weeklyCompetition[week];
         if (competition.closed) revert WeekAlreadyClosed(week);
         competition.closed = true;
@@ -360,6 +360,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _processOwner(account);
         _sweepLine();
     }
+
+    /// @notice One-time migration for the account whose third Working Level 2 position filled before
+    /// per-position distribution was introduced.
+    function initializeWorkingLevel2Position3(address account) external reinitializer(3) onlyOwner {
+        if (workingLevel[account] == 1 && matrixFilled[account][2] == 3) {
+            _queueTableDistribution(account, _workingIdAmount(2) * tokenUnit, true, 2);
+        }
+    }
     /// @notice An account's Single-Leg positions and levels, and the current line length.
     function singleLegInfo(address account) external view returns (uint64 primary, uint8 primaryLevel, uint64 reentry, uint8 reentryLvl, uint64 line) {
         return (_primaryOf(account), singleLegLevel[account], reentryPosition[account], reentryLevel[account], _lineLen());
@@ -386,15 +394,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         emit PoolIncomeSettled(account, singleAmount, workingAmount, nonWorkingAmount);
     }
     function poolRewardCap(address account) public view returns (uint256) {
-        (, , , uint256 cap) = rankRule(starRank[account] == 0 ? 1 : starRank[account]);
+        (, , , uint256 cap) = _rankRule(starRank[account] == 0 ? 1 : starRank[account]);
         return cap;
     }
     /// @notice The single source of truth for star ranks: directs needed, the referral-tree level and
     /// the members needed at that level (0 = none), and the lifetime pool-income cap.
     /// 3 Star = 16 at level 2, 4 Star = 64 at level 3, 5 Star = 300 at level 4, from any of the member's
     /// directs. Club royalty accrues from rank-up and is claimable with clubClaimDirects(rank) directs.
-    function rankRule(uint8 rank) public view returns (uint64 directs, uint8 qualifiedLevel, uint64 qualifiedCount, uint256 cap) {
-        if (rank == 0 || rank > 5) revert InvalidLevel(rank);
+    function _rankRule(uint8 rank) private view returns (uint64 directs, uint8 qualifiedLevel, uint64 qualifiedCount, uint256 cap) {
         if (rank == 1) return (0, 0, 0, ticketPrice * 2);
         if (rank == 2) return (4, 0, 0, ticketPrice * 5);
         if (rank == 3) return (0, 2, 16, ticketPrice * 10);
@@ -405,7 +412,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function lifetimeEarned(address account) external view returns (uint256) {
         return claimable[account] + totalWithdrawnGross[account];
     }
-    function directReferralCount(address account) external view returns (uint256) { return directList[account].length; }
     /// @notice Direct referrals of `account` in join order, paged.
     function getDirectReferrals(address account, uint256 offset, uint256 limit) external view returns (address[] memory page) {
         address[] storage list = directList[account];
@@ -413,26 +419,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 end = offset + limit > list.length ? list.length : offset + limit;
         page = new address[](end - offset);
         for (uint256 i = offset; i < end; ++i) page[i - offset] = list[i];
-    }
-    function workingLevelQuote(uint8 level)
-        external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
-    {
-        if (level == 0 || level > MAX_WORKING_LEVEL) revert InvalidLevel(level);
-        team = _workingTeam(level);
-        idAmount = _workingIdAmount(level) * tokenUnit;
-        turnover = team * idAmount;
-        autoUpgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
-        distributable = turnover - autoUpgrade;
-    }
-    function nonWorkingLevelQuote(uint8 level)
-        external view returns (uint256 team, uint256 idAmount, uint256 turnover, uint256 autoUpgrade, uint256 distributable)
-    {
-        if (level == 0 || level > 15) revert InvalidLevel(level);
-        team = uint256(level) * 2;
-        idAmount = _nonWorkingIdAmount(level) * tokenUnit;
-        turnover = team * idAmount;
-        autoUpgrade = level < 15 ? _nonWorkingIdAmount(level + 1) * tokenUnit : 0;
-        distributable = turnover - autoUpgrade;
     }
     function singleLegQuote(uint8 level)
         external view returns (uint64 members, uint64 directs, uint256 income, uint256 extra, uint256 u1, uint256 u2)
@@ -445,25 +431,20 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         u1 = _singleLegUpline(level) * tokenUnit;
         u2 = u1;
     }
-    function tenLevelPercentageBps(uint8 level) external pure returns (uint256) {
-        if (level == 0 || level > 9) revert InvalidLevel(level);
-        return _workingUplineBps(level - 1);
-    }
     function withdrawable(address account) external view returns (uint256) {
         if (!royaltyClaimable(account)) return claimable[account];
         return claimable[account] + pendingFiveStarReward(account) + pendingClubReward(account) + heldRoyalty[account];
     }
     /// @notice Total directs needed to claim a star club's royalty: 0, 4, 8, 12, 16 for 1–5 Star.
-    function clubClaimDirects(uint8 rank) public pure returns (uint64) {
+    function _clubClaimDirects(uint8 rank) private pure returns (uint64) {
         return rank <= 1 ? 0 : CLUB_CLAIM_DIRECTS_STEP * (rank - 1);
     }
     /// @notice Whether the account may claim royalty from its current club; otherwise it is held.
     function royaltyClaimable(address account) public view returns (bool) {
-        return participants[account].directCount >= clubClaimDirects(starRank[account]);
+        return participants[account].directCount >= _clubClaimDirects(starRank[account]);
     }
     function getParticipant(address account) external view returns (Participant memory) { return participants[account]; }
-    function isActive(address account) external view returns (bool) { return participants[account].directCount >= 2; }
-    function currentWeek() public view returns (uint256) { return block.timestamp / WEEK; }
+    function _currentWeek() private view returns (uint256) { return block.timestamp / WEEK; }
     function accountingInvariantHolds() external view returns (bool) {
         return totalParticipated == totalWorkingAllocated + totalNonWorkingAllocated + totalClubAllocated;
     }
@@ -500,9 +481,13 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         if (!working) return _enterNonWorking(member, level);
         address host = participants[member].sponsor;
         for (uint8 depth; depth < MAX_WORKING_LEVEL && host != address(0); ++depth) {
-            if ((working ? workingLevel[host] : nonWorkingLevel[host]) + 1 == level) {
+            if (workingLevel[host] + 1 == level) {
                 emit LevelEntered(member, host, working, level);
-                if (++matrixFilled[host][level] == _workingTeam(level)) _completeLevel(host, true, level);
+                uint8 filled = ++matrixFilled[host][level];
+                if (level == 2 && filled >= 3) {
+                    _queueTableDistribution(host, _workingIdAmount(2) * tokenUnit, true, 2);
+                }
+                if (filled == _workingTeam(level)) _completeLevel(host, true, level);
                 return;
             }
             host = participants[host].sponsor;
@@ -564,7 +549,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint8 next = participants[account].id == 0 ? 0 : 1;
         if (next != 0) {
             for (uint8 rank = 5; rank >= 2; --rank) {
-                (uint64 needDirects, uint8 level, uint64 needTeam, ) = rankRule(rank);
+                (uint64 needDirects, uint8 level, uint64 needTeam, ) = _rankRule(rank);
                 if (directs >= needDirects && (level == 0 || levelTeamCount[account][level] >= needTeam)) {
                     next = rank;
                     break;
@@ -617,6 +602,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 turnover = _workingTeam(level) * idAmount;
         uint256 upgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
         workingAutoUpgradeConsumed += upgrade;
+        // Level 2 positions 3 and 4 are distributed individually as soon as each fills.
+        if (level == 2) return;
         uint256 distributable = turnover - upgrade;
         _queueTableDistribution(account, distributable, true, level);
     }
@@ -854,7 +841,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     }
 
     function _recordWeeklyDirect(address sponsor) private {
-        uint256 week = currentWeek();
+        uint256 week = _currentWeek();
         uint64 count = ++weeklyDirects[week][sponsor];
         WeeklyCompetition storage competition = weeklyCompetition[week];
         if (count > competition.winningDirects) {

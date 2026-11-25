@@ -26,7 +26,8 @@ const key = process.env.DEPLOYER_PRIVATE_KEY;
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.28",
-    settings: { optimizer: { enabled: true, runs: 50 }, viaIR: true },
+    // Optimize for deployable bytecode size; this upgradeable prototype is close to the EIP-170 limit.
+    settings: { optimizer: { enabled: true, runs: 1 }, viaIR: true },
   },
   networks: {
     bscTestnet: {

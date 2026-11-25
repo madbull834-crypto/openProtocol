@@ -184,14 +184,14 @@ const FALLBACK: ProtocolRules = {
   upgradeDirect: 2,
   superstarMinDirects: 5,
   clubClaimDirects: [0, 0, 4, 8, 12, 16],
-  ticketPrice: 25_000_000n,
+  ticketPrice: 30_000_000n,
   workingAllocation: 15_000_000n,
   uplineBps: [1_000n, 400n, 200n, 50n, 50n, 50n, 50n, 50n, 50n],
   ranks: {
-    1: { directs: 0, qualifiedLevel: 0, qualifiedCount: 0, cap: 50_000_000n, capMultiple: 2 },
-    2: { directs: 4, qualifiedLevel: 0, qualifiedCount: 0, cap: 125_000_000n, capMultiple: 5 },
-    3: { directs: 0, qualifiedLevel: 2, qualifiedCount: 16, cap: 250_000_000n, capMultiple: 10 },
-    4: { directs: 0, qualifiedLevel: 3, qualifiedCount: 64, cap: 1_250_000_000n, capMultiple: 50 },
+    1: { directs: 0, qualifiedLevel: 0, qualifiedCount: 0, cap: 60_000_000n, capMultiple: 2 },
+    2: { directs: 4, qualifiedLevel: 0, qualifiedCount: 0, cap: 150_000_000n, capMultiple: 5 },
+    3: { directs: 0, qualifiedLevel: 2, qualifiedCount: 16, cap: 300_000_000n, capMultiple: 10 },
+    4: { directs: 0, qualifiedLevel: 3, qualifiedCount: 64, cap: 1_500_000_000n, capMultiple: 50 },
     5: { directs: 0, qualifiedLevel: 4, qualifiedCount: 300, cap: 2n ** 256n - 1n, capMultiple: null },
   },
 };
@@ -209,35 +209,27 @@ export function useProtocolRules(): ProtocolRules {
     { ...base, functionName: "SUPERSTAR_MIN_DIRECTS" as const },
     { ...base, functionName: "ticketPrice" as const },
     { ...base, functionName: "workingAllocation" as const },
-    ...[1, 2, 3, 4, 5].map(rank => ({ ...base, functionName: "rankRule" as const, args: [rank] as const })),
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => ({ ...base, functionName: "tenLevelPercentageBps" as const, args: [level] as const })),
-    ...[1, 2, 3, 4, 5].map(rank => ({ ...base, functionName: "clubClaimDirects" as const, args: [rank] as const })),
     { ...base, functionName: "UPGRADE_DIRECT" as const },
   ] : [];
   const reads = useReadContracts({ allowFailure: true, contracts, query: { enabled: contracts.length > 0, staleTime: 300_000 } });
   const r = reads.data;
   if (!r || r.some(result => result.status !== "success")) return FALLBACK;
   const ticketPrice = r[5].result as bigint;
-  const ranks: Record<number, RankRule> = {};
-  [1, 2, 3, 4, 5].forEach((rank, index) => {
-    const [directs, qualifiedLevel, qualifiedCount, cap] = r[7 + index].result as readonly [bigint, number, bigint, bigint];
-    ranks[rank] = {
-      directs: Number(directs), qualifiedLevel: Number(qualifiedLevel), qualifiedCount: Number(qualifiedCount), cap,
-      capMultiple: cap === MAX_UINT || ticketPrice === 0n ? null : Number(cap / ticketPrice),
-    };
-  });
+  const ranks = Object.fromEntries(Object.entries(FALLBACK.ranks).map(([rank, rule]) => [Number(rank), {
+    ...rule, cap: rule.capMultiple === null ? MAX_UINT : ticketPrice * BigInt(rule.capMultiple),
+  }]));
   return {
     loaded: true,
     royaltyBps: r[0].result as bigint,
     developmentBps: r[1].result as bigint,
     directShareBps: r[2].result as bigint,
     activationDirects: Number(r[3].result as bigint),
-    upgradeDirect: Number(r[26].result as bigint),
+    upgradeDirect: Number(r[7].result as bigint),
     superstarMinDirects: Number(r[4].result as bigint),
-    clubClaimDirects: [0, ...r.slice(21, 26).map(result => Number(result.result as bigint))],
+    clubClaimDirects: FALLBACK.clubClaimDirects,
     ticketPrice,
     workingAllocation: r[6].result as bigint,
-    uplineBps: r.slice(12, 21).map(result => result.result as bigint),
+    uplineBps: FALLBACK.uplineBps,
     ranks,
   };
 }

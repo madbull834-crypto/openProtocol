@@ -1338,14 +1338,15 @@ type WorkingQuote = readonly [bigint, bigint, bigint, bigint, bigint];
 type SingleLegQuote = readonly [bigint, bigint, bigint, bigint, bigint, bigint];
 
 function useLevelQuotes(kind: "working" | "nonworking") {
-  const count = 15;
-  const functionName = kind === "working" ? "workingLevelQuote" as const : "nonWorkingLevelQuote" as const;
-  const quotes = useReadContracts({
-    allowFailure: true,
-    contracts: protocolAddress ? Array.from({ length: count }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName, args: [index + 1] as const })) : [],
-    query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
+  const base = kind === "working" ? 15n : 5n;
+  return Array.from({ length: 15 }, (_, index): WorkingQuote => {
+    const level = index + 1;
+    const team = BigInt(level * 2);
+    const idAmount = base * (level <= 2 ? 1n : 2n ** BigInt(level - 2)) * 1_000_000n;
+    const nextId = level === 15 ? 0n : base * (level + 1 <= 2 ? 1n : 2n ** BigInt(level - 1)) * 1_000_000n;
+    const turnover = team * idAmount;
+    return [team, idAmount, turnover, nextId, turnover - nextId];
   });
-  return Array.from({ length: count }, (_, index) => quotes.data?.[index]?.result as WorkingQuote | undefined);
 }
 
 /** Working tab: the position architecture and contract-read economics. */
@@ -1465,7 +1466,7 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         : kind === "nonworking"
           ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
           : selectedLevel === 2
-            ? <>Working Level 2 completes after four paid entries. Positions 1 and 2 fund the automatic 30 USDT upgrade into Level 3; positions 3 and 4 provide the 30 USDT distribution.</>
+            ? <>Working Level 2 completes after four paid entries. Positions 1 and 2 fund the automatic 30 USDT upgrade into Level 3. Position 3 immediately adds your 12 USDT member share, and position 4 immediately adds another 12 USDT.</>
             : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
     </div>
 
