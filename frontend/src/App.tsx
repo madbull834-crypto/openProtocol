@@ -1467,7 +1467,9 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
           ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
           : selectedLevel === 2
             ? <>Working Level 2 completes after four paid entries. Positions 1 and 2 fund the automatic 30 USDT upgrade into Level 3. Position 3 immediately adds your 12 USDT member share, and position 4 immediately adds another 12 USDT.</>
-            : <>Each position is one entry that paid this level's ID amount: a team member upgrading into Level {selectedLevel} fills the matrix of their nearest upline on this level. When all {required} are filled, the level pays out and your auto-upgrade enters you into the next level.</>}</p>
+            : selectedLevel === 15
+              ? <>Level 15 has no further auto-upgrade, so every paid position immediately adds your 80% member share. The level completes when all {required} positions are filled.</>
+              : <>Positions 1 and 2 fund your automatic upgrade into Level {selectedLevel + 1}. Every paid position from 3 onward immediately adds your 80% member share. The level completes when all {required} positions are filled.</>}</p>
     </div>
 
     <div className="pool-economics">

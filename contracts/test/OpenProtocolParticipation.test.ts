@@ -194,6 +194,30 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
+  it("pays each Working Level 3 distribution position immediately", async function () {
+    const { genesis, protocol, token } = await fixture();
+    const directs = await addMembers(protocol, token, genesis.address, 4);
+    const children = new Map<string, any[]>();
+
+    // Four directs complete Level 1, filling and completing genesis's Level 2.
+    for (const direct of directs) children.set(direct.address, await addMembers(protocol, token, direct.address, 2));
+    expect(await protocol.workingLevel(genesis.address)).to.equal(2);
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
+
+    // Three directs complete Level 2. Their first two Level-3 entries fund genesis's upgrade;
+    // the third immediately pays genesis 24 USDT (80% of the 30 USDT Level-3 ID).
+    for (const [index, direct] of directs.slice(0, 3).entries()) {
+      const level2Entries = [...children.get(direct.address)!, ...await addMembers(protocol, token, direct.address, 2)];
+      for (const entry of level2Entries) await addMembers(protocol, token, entry.address, 2);
+      expect(await protocol.matrixFilled(genesis.address, 3)).to.equal(index + 1);
+      // Each direct's Level-2 completion also gives genesis its 3 USDT U1 total.
+      expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(
+        index < 2 ? 27_000_000n + BigInt(index) * 3_000_000n : 57_000_000n,
+      );
+    }
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
   it("funds Single-Leg from 9 USDT and Non-Working from 5 USDT of every ticket", async function () {
     const { genesis, protocol, token } = await fixture();
     await addMembers(protocol, token, genesis.address, 10);

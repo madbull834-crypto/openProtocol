@@ -361,13 +361,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         _sweepLine();
     }
 
-    /// @notice One-time migration for the account whose third Working Level 2 position filled before
-    /// per-position distribution was introduced.
-    function initializeWorkingLevel2Position3(address account) external reinitializer(3) onlyOwner {
-        if (workingLevel[account] == 1 && matrixFilled[account][2] == 3) {
-            _queueTableDistribution(account, _workingIdAmount(2) * tokenUnit, true, 2);
-        }
-    }
     /// @notice An account's Single-Leg positions and levels, and the current line length.
     function singleLegInfo(address account) external view returns (uint64 primary, uint8 primaryLevel, uint64 reentry, uint8 reentryLvl, uint64 line) {
         return (_primaryOf(account), singleLegLevel[account], reentryPosition[account], reentryLevel[account], _lineLen());
@@ -484,8 +477,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             if (workingLevel[host] + 1 == level) {
                 emit LevelEntered(member, host, working, level);
                 uint8 filled = ++matrixFilled[host][level];
-                if (level == 2 && filled >= 3) {
-                    _queueTableDistribution(host, _workingIdAmount(2) * tokenUnit, true, 2);
+                if (level > 1 && (filled >= 3 || level == MAX_WORKING_LEVEL)) {
+                    _queueTableDistribution(host, _workingIdAmount(level) * tokenUnit, true, level);
                 }
                 if (filled == _workingTeam(level)) _completeLevel(host, true, level);
                 return;
@@ -602,8 +595,9 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         uint256 turnover = _workingTeam(level) * idAmount;
         uint256 upgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
         workingAutoUpgradeConsumed += upgrade;
-        // Level 2 positions 3 and 4 are distributed individually as soon as each fills.
-        if (level == 2) return;
+        // Working Levels 2–14 distribute every position from 3 onward as it fills; Level 15
+        // distributes every position because there is no further auto-upgrade.
+        if (level > 1) return;
         uint256 distributable = turnover - upgrade;
         _queueTableDistribution(account, distributable, true, level);
     }
