@@ -73,20 +73,21 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 
 | | Address |
 |---|---|
-| Protocol proxy (use this everywhere) | `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72` |
+| Protocol proxy (use this everywhere) | `0xaDcA8CcdC6B8C945F0bB3aE86f347ef23C569205` |
 | Implementation | `0x3a4327FA025AbFb3BF9eee5EB0dd2F82133cCa3f` |
-| Deployment block (`INDEXER_START_BLOCK`) | `144594547` |
+| Deployment block (`INDEXER_START_BLOCK`) | `144709726` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
 
-Fresh deployment on 2026-11-24 with the 30 USDT ticket (15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar) self-funding Working / Non-Working matrices, the global first-come-first-served Non-Working queue and qualified-member Single-Leg levels. Set
+Fresh deployment on 2026-11-25 with the 30 USDT ticket (15 Working, 5 Non-Working, 9 Single-Leg, 1 Superstar), immediate per-position Working distributions, self-funding Working / Non-Working matrices, the global first-come-first-served Non-Working queue and qualified-member Single-Leg levels. Deployment transaction: `0xda66a0e574cd8acaaad5841c46a55521f9769fe3c0c26c2331d16d4966c36807`. Set
 `PROTOCOL_PROXY_ADDRESS`, `VITE_PROTOCOL_ADDRESS` and `INDEXER_PROTOCOL_ADDRESS` to the proxy and
-`INDEXER_START_BLOCK=144594547`. When switching an existing server from a previous proxy
-(`0xace1B2C54518f06B86B131ec91d03bB3008D925F`, `0x40c64072Af2e12062Ca5ABC60b62640388982dF6` or `0x1aD54218F561E5Be00D982aC7C0298CE27fBcE47`), clear the indexed tables before restarting the indexer:
+`INDEXER_START_BLOCK=144709726`. When switching an existing server from a previous proxy, including `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72`, clear the indexed tables before restarting the indexer:
 
 ```sql
 TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "BlockCheckpoint" RESTART IDENTITY;
 ```
+
+### Previous proxy history (`0x0f89BF511e1e67fC842ed3967D81E824d3f96E72`)
 
 The implementation was upgraded on 2026-11-24 in block `144642585` to make Working Level 2 use four paid positions: positions 1–2 fund the Level 3 auto-upgrade and positions 3–4 fund distribution. Upgrade transaction: `0x37f24cd3612c847f1a3edf5c7e1d5d723374577d2084c9a9ecc050506476b7ee`.
 
