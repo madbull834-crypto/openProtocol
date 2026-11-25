@@ -74,7 +74,7 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 | | Address |
 |---|---|
 | Protocol proxy (use this everywhere) | `0x0f89BF511e1e67fC842ed3967D81E824d3f96E72` |
-| Implementation | `0x1162A3f332AD3B255d88Bdf24bE921206f15db5F` |
+| Implementation | `0x3a4327FA025AbFb3BF9eee5EB0dd2F82133cCa3f` |
 | Deployment block (`INDEXER_START_BLOCK`) | `144594547` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
@@ -93,6 +93,8 @@ The implementation was upgraded on 2026-11-24 in block `144642585` to make Worki
 The implementation was upgraded again on 2026-11-25 in block `144645596` to require 25 global Single-Leg positions after a member, plus two personal directs, for Level 2. Upgrade transaction: `0xe3987a01295f7897abfac85674817b1a973c5312f2e2aaba6aee5f835d83a259`.
 
 The implementation was upgraded on 2026-11-25 in block `144705863` so Working Level 2 position 3 immediately queues the member's 12 USDT share, and position 4 queues the second 12 USDT share. Upgrade transaction: `0x038ff5bd2d01f2d05789eb6a19cec5376e010a6714b42d2dc93dc643dce9ce6c`. The already-filled position 3 for member #2 was migrated in transaction `0xa971efe32b58c822650ee83cae72708c4d1be37e4bb80dd85b9b7667745c6f0d`.
+
+The implementation was upgraded on 2026-11-25 in block `144707152` to extend immediate Working distribution to all levels: Levels 2–14 reserve positions 1–2 for the next upgrade and pay every position from 3 onward immediately; Level 15 pays every position immediately because it has no next upgrade. Upgrade transaction: `0xd3dedbda7496cf596361d3fee2145fe3108734ead2e01ffb97112185fbafb194`.
 
 ## Verification and security
 
