@@ -64,6 +64,7 @@ describe("OpenProtocolParticipation", function () {
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n); // Level 1 is not paid twice
     await protocol.connect(carol).register(genesis.address);
     expect(await protocol.claimable(genesis.address)).to.equal(24_000_000n);
+    expect(await protocol.workingPositionsFilled(genesis.address, 1)).to.equal(3n);
     // Reserve: the 2nd direct's 15 + 3 from each paid direct (genesis has no uplines to pay).
     expect(await protocol.workingReserve()).to.equal(21_000_000n);
   });
@@ -171,25 +172,25 @@ describe("OpenProtocolParticipation", function () {
     expect((await protocol.singleLegQuote(4)).directs).to.equal(5);
   });
 
-  it("uses four Working Level 2 entries: two for upgrade and two for distribution", async function () {
+  it("unlocks Working Level 3 at the second Level 2 entry and pays later entries", async function () {
     const { genesis, alice, bob, carol, dave, protocol, token } = await fixture();
     for (const member of [alice, bob, carol, dave]) await protocol.connect(member).register(genesis.address);
     // Level 1 completed by the 2nd direct (its 15 USDT is the upgrade); genesis has no upline to host Level 2.
     expect(await protocol.workingLevel(genesis.address)).to.equal(1);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(0n);
-    // Each direct completing Level 1 enters genesis's Level 2 matrix. Position 3 immediately queues
-    // its 12 USDT member share; position 4 queues another 12 USDT and completes the level.
+    // Positions 1–2 fully fund the next 30 USDT entry. Positions 3 and 4 pay 12 USDT each.
     for (const [index, direct] of [alice, bob, carol, dave].entries()) {
       await addMembers(protocol, token, direct.address, 2);
-      expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(index + 1);
-      expect(await protocol.workingLevel(genesis.address)).to.equal(index < 3 ? 1 : 2);
+      expect(await protocol.workingPositionsFilled(genesis.address, 2)).to.equal(index + 1);
+      expect(await protocol.workingLevel(genesis.address)).to.equal(index === 0 ? 1 : 2);
+      expect(await protocol.workingAutoUpgradeConsumed()).to.equal(index === 0 ? 0n : 30_000_000n);
       expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(
         index < 2 ? 0n : index === 2 ? 12_000_000n : 24_000_000n,
       );
     }
-    // Level 2: 4 × 15 = 60 turnover. Positions 1–2 fund the 30 USDT Level 3 upgrade;
-    // positions 3–4 provide the 30 USDT distribution (80% = 24 USDT to genesis).
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
+    await protocol.syncWorkingUpgrade(genesis.address);
+    expect(await protocol.workingAutoUpgradeConsumed()).to.equal(30_000_000n);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
@@ -199,7 +200,7 @@ describe("OpenProtocolParticipation", function () {
     const directs = await addMembers(protocol, token, genesis.address, 4);
     const children = new Map<string, any[]>();
 
-    // Four directs complete Level 1, filling and completing genesis's Level 2.
+    // Four directs complete Level 1. The first two fund genesis's Level 3 entry.
     for (const direct of directs) children.set(direct.address, await addMembers(protocol, token, direct.address, 2));
     expect(await protocol.workingLevel(genesis.address)).to.equal(2);
     expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(24_000_000n);
@@ -209,12 +210,38 @@ describe("OpenProtocolParticipation", function () {
     for (const [index, direct] of directs.slice(0, 3).entries()) {
       const level2Entries = [...children.get(direct.address)!, ...await addMembers(protocol, token, direct.address, 2)];
       for (const entry of level2Entries) await addMembers(protocol, token, entry.address, 2);
-      expect(await protocol.matrixFilled(genesis.address, 3)).to.equal(index + 1);
-      // Each direct's Level-2 completion also gives genesis its 3 USDT U1 total.
+      expect(await protocol.workingPositionsFilled(genesis.address, 3)).to.equal(index + 1);
+      expect(await protocol.workingLevel(genesis.address)).to.equal(index === 0 ? 2 : 3);
+      // Working Level 2 positions 3 and 4 give genesis its 3 USDT U1 total.
       expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(
         index < 2 ? 27_000_000n + BigInt(index) * 3_000_000n : 57_000_000n,
       );
     }
+    expect(await protocol.solvencyInvariantHolds()).to.equal(true);
+  });
+
+  it("keeps paying the nearest unlocked Working Level 2 after its auto-upgrade", async function () {
+    const { genesis, alice, bob, protocol, token } = await fixture();
+    await protocol.connect(alice).register(genesis.address);
+    await protocol.connect(bob).register(genesis.address);
+    const directs = await addMembers(protocol, token, alice.address, 6);
+    for (const direct of directs.slice(0, 4)) await addMembers(protocol, token, direct.address, 2);
+    expect(await protocol.workingLevel(alice.address)).to.equal(2);
+    expect(await protocol.workingPositionsFilled(alice.address, 2)).to.equal(4n);
+    expect(await protocol.pendingWorkingPoolIncome(alice.address)).to.equal(24_000_000n);
+    expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(1);
+    const upgradeConsumed = await protocol.workingAutoUpgradeConsumed();
+
+    for (const [index, direct] of directs.slice(4).entries()) {
+      await addMembers(protocol, token, direct.address, 2);
+      expect(await protocol.workingPositionsFilled(alice.address, 2)).to.equal(BigInt(5 + index));
+      expect(await protocol.pendingWorkingPoolIncome(alice.address)).to.equal(36_000_000n + BigInt(index) * 12_000_000n);
+    }
+    expect(await protocol.pendingWorkingPoolIncome(genesis.address)).to.equal(6_000_000n);
+    expect(await protocol.matrixFilled(genesis.address, 2)).to.equal(1);
+    expect(await protocol.matrixFilled(alice.address, 2)).to.equal(2);
+    expect(await protocol.workingLevel(alice.address)).to.equal(2);
+    expect(await protocol.workingAutoUpgradeConsumed()).to.equal(upgradeConsumed);
     expect(await protocol.solvencyInvariantHolds()).to.equal(true);
   });
 
@@ -416,8 +443,7 @@ describe("OpenProtocolParticipation", function () {
       nonWorking += await protocol.pendingNonWorkingPoolIncome(member);
     }
     // Self-funding: everything queued is covered by entries already paid into each pool.
-    // Random growth completes many Non-Working levels; Working Level 2 needs 4 directs who each completed
-    // Level 1, which the structured test above covers.
+    // Random growth completes many Non-Working levels. Structured Working placements are covered above.
     expect(nonWorking).to.be.greaterThan(0n);
     expect(await protocol.workingReserve()).to.be.greaterThanOrEqual(working);
     expect(await protocol.nonWorkingReserve()).to.be.greaterThanOrEqual(nonWorking);

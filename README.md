@@ -74,7 +74,7 @@ The deployment script does not deploy placeholder pool vaults. Externally owned 
 | | Address |
 |---|---|
 | Protocol proxy (use this everywhere) | `0xaDcA8CcdC6B8C945F0bB3aE86f347ef23C569205` |
-| Implementation | `0x3a4327FA025AbFb3BF9eee5EB0dd2F82133cCa3f` |
+| Implementation | `0x38C988095e379020F8EEF04a702f2BDAbdF0b253` |
 | Deployment block (`INDEXER_START_BLOCK`) | `144709726` |
 | Test USDT | `0x59ab714Eb2ff96869504302e38d5E8459009e84C` |
 | Genesis / owner | `0x9ee6572EcE42BeD72EA265d3AE46D7c60c0489D0` |
@@ -86,6 +86,8 @@ Fresh deployment on 2026-11-25 with the 30 USDT ticket (15 Working, 5 Non-Workin
 ```sql
 TRUNCATE "Participant", "Allocation", "RewardCredit", "Claim", "PoolQueue", "ClubRoyalty", "BlockCheckpoint" RESTART IDENTITY;
 ```
+
+On 2026-11-25, the proxy was upgraded in block `144745365` to accept unlimited qualifying entries at each Working level and unlock the next level as soon as its upgrade is fully funded. Levels 2–14 advance on their second paid entry. [Upgrade transaction](https://testnet.bscscan.com/tx/0x32036bfa0a3a332936192d180b31bfd7052d620e4be200e85c2aa290db466dd5).
 
 ### Previous proxy history (`0x0f89BF511e1e67fC842ed3967D81E824d3f96E72`)
 

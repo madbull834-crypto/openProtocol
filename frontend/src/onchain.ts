@@ -66,23 +66,55 @@ export function useSingleLegLine(address?: Address, limit = 50) {
     queryKey: ["single-leg-line", address?.toLowerCase(), limit],
     enabled: Boolean(address && client && protocolAddress),
     refetchInterval: 15_000,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!address || !client || !protocolAddress) return undefined;
-      const [primary, primaryLevel, reentry, reentryLevel, line] = await client.readContract({ address: protocolAddress, abi: protocolAbi, functionName: "singleLegInfo", args: [address] }) as readonly [bigint, number, bigint, number, bigint];
+      const contract = { address: protocolAddress, abi: protocolAbi };
+      const blockNumber = await client.getBlockNumber();
+      const [primary, primaryLevel, reentry, reentryLevel, line] = await client.readContract({ ...contract, blockNumber, functionName: "singleLegInfo", args: [address] });
       // Level L's member condition is met once the level's cursor has passed the position (contract _sweepLine).
-      const levelReads = await client.multicall({ allowFailure: false, contracts: [
-        ...Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "lineCursor" as const, args: [index + 1] as const })),
-        ...Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress!, abi: protocolAbi, functionName: "singleLegReached" as const, args: [index + 1] as const })),
+      const levelReads = await client.multicall({ blockNumber, allowFailure: false, contracts: [
+        ...Array.from({ length: 10 }, (_, index) => ({ ...contract, functionName: "lineCursor" as const, args: [index + 1] as const })),
+        ...Array.from({ length: 10 }, (_, index) => ({ ...contract, functionName: "singleLegReached" as const, args: [index + 1] as const })),
       ] }) as bigint[];
       const cursors = levelReads.slice(0, 10).map(value => Number(value) || 1);
       const reachedTotals = levelReads.slice(10).map(Number);
       const membersMet = (position: number, level: number) => position > 0 && position < cursors[level - 1];
+      const qualifiedLevel = Math.max(2, primaryLevel);
+      const countQualifiedAfter = async (position: number, ownLevel: number, requiredLevel: number) => {
+        if (!position || requiredLevel >= 10 || membersMet(position, requiredLevel + 1)) return undefined;
+        const lastCandidate = cursors[requiredLevel - 1] - 1;
+        if (lastCandidate <= position || reachedTotals[requiredLevel - 1] === 0) return 0;
+
+        // Count the shorter side of your position using the global total to recover the suffix.
+        const countBefore = position - 1 < lastCandidate - position;
+        const first = countBefore ? 1 : position + 1;
+        const last = countBefore ? position - 1 : lastCandidate;
+        let count = 0;
+        const batchSize = 100;
+        for (let start = first; start <= last; start += batchSize) {
+          signal.throwIfAborted();
+          const positions = Array.from({ length: Math.min(batchSize, last - start + 1) }, (_, index) => BigInt(start + index));
+          const owners = await client.multicall({ blockNumber, allowFailure: false, contracts: positions.map(position => ({ ...contract, functionName: "lineOwnerAt" as const, args: [position] as const })) });
+          const entries = await client.multicall({ blockNumber, allowFailure: false, contracts: owners.map(owner => ({ ...contract, functionName: "singleLegInfo" as const, args: [owner] as const })) });
+          entries.forEach(([primaryPosition, primaryLevel, reentryPosition, reentryLevel], index) => {
+            const position = positions[index];
+            if ((position === primaryPosition && primaryLevel >= requiredLevel) || (position === reentryPosition && reentryLevel >= requiredLevel)) count++;
+          });
+        }
+        return countBefore ? reachedTotals[requiredLevel - 1] - count - Number(ownLevel >= requiredLevel) : count;
+      };
       const first = Number(primary) + 1;
       const last = Math.min(Number(line), Number(primary) + limit);
       const positions = Array.from({ length: Math.max(0, last - first + 1) }, (_, index) => first + index);
-      const owners = positions.length ? await client.multicall({ allowFailure: false, contracts: positions.map(position => ({ address: protocolAddress!, abi: protocolAbi, functionName: "lineOwnerAt" as const, args: [BigInt(position)] as const })) }) as Address[] : [];
-      const details = owners.length ? await client.multicall({ allowFailure: false, contracts: owners.map(owner => ({ address: protocolAddress!, abi: protocolAbi, functionName: "getParticipant" as const, args: [owner] as const })) }) as { id: bigint }[] : [];
-      const reentries = owners.length ? await client.multicall({ allowFailure: false, contracts: owners.map(owner => ({ address: protocolAddress!, abi: protocolAbi, functionName: "reentryPosition" as const, args: [owner] as const })) }) as bigint[] : [];
+      const [qualifiedAfter, reentryQualifiedAfter, owners] = await Promise.all([
+        countQualifiedAfter(Number(primary), primaryLevel, qualifiedLevel),
+        reentryLevel >= 2 ? countQualifiedAfter(Number(reentry), reentryLevel, reentryLevel) : undefined,
+        positions.length ? client.multicall({ blockNumber, allowFailure: false, contracts: positions.map(position => ({ ...contract, functionName: "lineOwnerAt" as const, args: [BigInt(position)] as const })) }) : [],
+      ]);
+      const [details, reentries] = await Promise.all([
+        owners.length ? client.multicall({ blockNumber, allowFailure: false, contracts: owners.map(owner => ({ ...contract, functionName: "getParticipant" as const, args: [owner] as const })) }) : [],
+        owners.length ? client.multicall({ blockNumber, allowFailure: false, contracts: owners.map(owner => ({ ...contract, functionName: "reentryPosition" as const, args: [owner] as const })) }) : [],
+      ]);
       const after: LinePosition[] = positions.map((position, index) => ({
         position, address: owners[index], memberId: details[index].id.toString(), reentry: reentries[index] === BigInt(position),
       }));
@@ -91,8 +123,9 @@ export function useSingleLegLine(address?: Address, limit = 50) {
         line: Number(line), team: Number(line) - Number(primary), reentryTeam: reentry ? Number(line) - Number(reentry) : 0, after,
         /** metAt[L]: your first position has enough members after it for Level L (index 1–10). */
         metAt: [false, ...Array.from({ length: 10 }, (_, index) => membersMet(Number(primary), index + 1))],
-        /** reachedTotals[k-1]: positions in the whole line that have reached Level k. */
-        reachedTotals,
+        qualifiedLevel, qualifiedAfter,
+        reentryMetAt: [false, ...Array.from({ length: 10 }, (_, index) => membersMet(Number(reentry), index + 1))],
+        reentryQualifiedAfter,
       };
     },
   });

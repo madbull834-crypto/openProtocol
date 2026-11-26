@@ -15,6 +15,9 @@ export const protocolAbi = [
   { type: "function", name: "heldRoyalty", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
   { type: "function", name: "royaltyClaimable", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "matrixFilled", stateMutability: "view", inputs: [{ name: "account", type: "address" }, { name: "key", type: "uint8" }], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "workingPositionsFilled", stateMutability: "view", inputs: [{ name: "account", type: "address" }, { name: "level", type: "uint8" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "WORKING_UPGRADE_POSITIONS", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "syncWorkingUpgrade", stateMutability: "nonpayable", inputs: [{ name: "account", type: "address" }], outputs: [] },
   { type: "function", name: "singleLegInfo", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "primary", type: "uint64" }, { name: "primaryLevel", type: "uint8" }, { name: "reentry", type: "uint64" }, { name: "reentryLvl", type: "uint8" }, { name: "line", type: "uint64" }] },
   { type: "function", name: "reentryPosition", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "accClubRewardPerMember", stateMutability: "view", inputs: [{ name: "rank", type: "uint8" }], outputs: [{ type: "uint256" }] },
@@ -66,6 +69,7 @@ export const protocolAbi = [
   { type: "function", name: "fiveStarWeight",stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "weeklyDirects", stateMutability: "view", inputs: [{ name: "week", type: "uint256" }, { name: "account", type: "address" }], outputs: [{ type: "uint64" }] },
   { type: "function", name: "weeklyCompetition", stateMutability: "view", inputs: [{ name: "week", type: "uint256" }], outputs: [{ name: "leader", type: "address" }, { name: "winningDirects", type: "uint64" }, { name: "closed", type: "bool" }] },
+  { type: "function", name: "closeWeek", stateMutability: "nonpayable", inputs: [{ name: "week", type: "uint256" }], outputs: [] },
 ] as const;
 
 export const erc20Abi = [

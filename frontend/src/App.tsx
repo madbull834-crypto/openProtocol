@@ -533,6 +533,7 @@ function txErrorMessage(error: Error | null, action: string) {
 function Referrals({ address, participant, onParticipate }: { address?: Address; participant?: { id: bigint; directCount: bigint; sponsor: Address; joinedAt: bigint }; onParticipate: () => void }) {
   const account = address ?? zeroAddress;
   const currentWeek = BigInt(Math.floor(Date.now() / 1000 / (7 * 24 * 60 * 60)));
+  const previousWeek = currentWeek - 1n;
   const rewards = useReadContracts({
     contracts: protocolAddress ? [
       { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "withdrawable", args: [account] },
@@ -581,7 +582,16 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   });
   const claim = useWriteContract();
   const claimReceipt = useWaitForTransactionReceipt({ hash: claim.data });
-  useEffect(() => { if (claimReceipt.isSuccess) rewards.refetch(); }, [claimReceipt.isSuccess, rewards.refetch]);
+  const previousCompetition = useReadContract({
+    address: protocolAddress, abi: protocolAbi, chainId: requiredChainId,
+    functionName: "weeklyCompetition", args: [previousWeek],
+    query: { enabled: Boolean(protocolAddress && address), refetchInterval: 12_000 },
+  });
+  const closeWeek = useWriteContract();
+  const closeWeekReceipt = useWaitForTransactionReceipt({ hash: closeWeek.data, chainId: requiredChainId });
+  const weekClosed = closeWeekReceipt.data?.status === "success" && closeWeek.variables?.args?.[0] === previousWeek;
+  useEffect(() => { if (claimReceipt.isSuccess || weekClosed) rewards.refetch(); }, [claimReceipt.isSuccess, weekClosed, rewards.refetch]);
+  useEffect(() => { if (weekClosed) previousCompetition.refetch(); }, [weekClosed, previousCompetition.refetch]);
   const withdrawable = rewards.data?.[0]?.result as bigint | undefined;
   const team = rewards.data?.[1]?.result as bigint | undefined;
   const working = rewards.data?.[2]?.result as number | undefined;
@@ -617,6 +627,11 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const weeklyCompetition = rewards.data?.[21]?.result as readonly [Address, bigint, boolean] | undefined;
   const isWeeklyLeader = Boolean(weeklyCompetition && weeklyCompetition[0] !== zeroAddress && weeklyCompetition[0].toLowerCase() === address?.toLowerCase() && weeklyCompetition[1] >= BigInt(rules.superstarMinDirects));
   const superstarMin = rules.superstarMinDirects;
+  const previousWinner = previousCompetition.data && previousCompetition.data[0] !== zeroAddress && previousCompetition.data[1] >= BigInt(superstarMin)
+    ? previousCompetition.data[0] : undefined;
+  const previousClosed = previousCompetition.data?.[2];
+  const closeWeekBusy = closeWeek.isPending || closeWeekReceipt.isLoading;
+  const closeWeekError = txErrorMessage(closeWeek.error ?? closeWeekReceipt.error, "Closing the Superstar week");
   const singleLegEntries = rewards.data?.[22]?.result as bigint | undefined;
   const singleLegReentries = rewards.data?.[23]?.result as bigint | undefined;
   const nonWorkingEntryCredit = rewards.data?.[24]?.result as bigint | undefined;
@@ -678,6 +693,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
   const claimBusy = claim.isPending || claimReceipt.isLoading;
   const actionError = txErrorMessage(claim.error, "Withdrawal");
   const doClaim = () => { claim.reset(); claim.writeContract({ address: protocolAddress!, abi: protocolAbi, functionName: "claim", chainId: requiredChainId }); };
+  const closeSuperstarWeek = () => {
+    if (!protocolAddress) return;
+    closeWeek.writeContract({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "closeWeek", args: [previousWeek] });
+  };
 
   if (!address || !registered) {
     return <motion.div {...fade}>
@@ -883,27 +902,22 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         </div>
 
         {(() => {
-          const level = singleLeg ?? 0;
+          const level = singleLegLine.data?.primaryLevel ?? singleLeg ?? 0;
           const done = level >= 10;
           const [nextMembers, nextDirects] = SINGLE_LEG_TABLE[Math.min(level, 9)];
-          const prevMembers = level === 0 ? 0 : SINGLE_LEG_TABLE[level - 1][0];
-          // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
-          void prevMembers;
-          const usesGlobalCount = level <= 1;
-          const met = usesGlobalCount ? (slTeam ?? 0) >= nextMembers : Boolean(singleLegLine.data?.metAt[level + 1]);
-          const counted = usesGlobalCount ? (slTeam ?? 0) : met ? nextMembers : 0;
-          const progress = done ? 100 : Math.min(100, counted / nextMembers * 100);
+          const counted = singleLegTeamProgress(singleLegLine.data, level + 1, nextMembers);
+          const progress = done ? 100 : counted === undefined ? undefined : Math.min(100, counted / nextMembers * 100);
           return <div className="db-card single-leg-card">
-            <div className="db-section-head"><div><small>SINGLE-LEG POOL</small><h3>Single-Leg team</h3></div><button className="db-text-btn" onClick={() => setTab("network")}>View <ChevronRight size={14}/></button></div>
+            <div className="db-section-head"><div><small>SINGLE-LEG POOL</small><h3>Single-Leg team</h3></div><button className="db-text-btn" onClick={() => { setNetworkView("single"); setTab("network"); }}>View <ChevronRight size={14}/></button></div>
             <div className="single-leg-body">
               <div className="team-total sl"><span className="db-icon"><TrendingUp size={18}/></span><small>Single-Leg team</small><b>{slTeam === undefined ? "—" : slTeam.toLocaleString()}</b><em>Everyone who joined after you · position #{singleLegLine.data?.primary ?? "—"}</em></div>
               <div className="single-leg-stats">
                 <div><small>Current level</small><b>{level} <i>/ 10</i></b></div>
-                <div><small>Next level needs</small><b>{done ? "—" : level === 0 ? `${nextMembers.toLocaleString()} after you` : `${nextMembers.toLocaleString()} at Level ${level}+`}</b><span>{done ? "All levels complete" : level === 0 ? `${Math.max(0, nextMembers - counted).toLocaleString()} more people` : met ? "Members condition met" : `People after you must reach Level ${level}`}</span></div>
+                <div><small>{done ? "Next level" : `Level ${level + 1} · In progress`}</small><b>{done ? "—" : `${counted === undefined ? "—" : Math.min(counted, nextMembers).toLocaleString()} / ${nextMembers.toLocaleString()}`}</b><span>{done ? "All levels complete" : level < 2 ? "Global positions after you" : `Positions after you at Level ${level}+`}</span></div>
                 <div><small>Directs required</small><b>{done ? "—" : nextDirects}</b><span>{done ? "" : directCount >= nextDirects ? "Requirement met" : `You have ${directCount}`}</span></div>
               </div>
             </div>
-            <div className="single-leg-progress"><div><span>{done ? "Single-Leg Level 10 complete" : `Progress to Level ${level + 1}`}</span><b>{Math.round(progress)}%</b></div><i><em style={{ width: `${progress}%` }}/></i></div>
+            <div className="single-leg-progress"><div><span>{done ? "Single-Leg Level 10 complete" : `Level ${level + 1} · Unlocked`}</span><b>{progress === undefined ? "—" : `${Math.round(progress)}%`}</b></div><i><em style={{ width: `${progress ?? 0}%` }}/></i></div>
           </div>;
         })()}
 
@@ -1030,10 +1044,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
         <div className="db-seg" role="tablist" aria-label="Network system">
           {([["working", "Working Matrix", `${directCount}/2 activation`], ["nonworking", "Non-Working", `Level ${nonWorkingShown}/15`], ["single", "Single Leg", `Level ${singleLeg ?? 0}/10`], ["reentry", "Re-entry", `${singleLegReentries?.toString() ?? "0"} re-entr${singleLegReentries === 1n ? "y" : "ies"}`]] as const).map(([key, label, meta]) => <button key={key} className={networkView === key ? "active" : ""} onClick={() => setNetworkView(key)}><b>{label}</b><span>{meta}</span></button>)}
         </div>
-        {networkView === "working" && <><WorkingMatrixView address={address} team={team} workingLevel={working}/><WorkingDistributionPanel directs={directCount} heldForUpgrade={heldForUpgrade} rules={rules}/></>}
-        {networkView === "nonworking" && <NonWorkingTree address={address} team={team} currentLevel={nonWorking}/>}
+        {networkView === "working" && <><WorkingMatrixView address={address} directCount={participant?.directCount} workingLevel={working}/><WorkingDistributionPanel directs={directCount} heldForUpgrade={heldForUpgrade} rules={rules}/></>}
+        {networkView === "nonworking" && <NonWorkingTree address={address} currentLevel={nonWorking}/>}
         {networkView === "single" && <SingleLegTree address={address} directs={participant?.directCount} currentLevel={singleLeg} line={singleLegLine.data} lineLoading={singleLegLine.isLoading} lineError={singleLegLine.isError}/>}
-        {networkView === "reentry" && <ReentryView address={address} slTeam={slTeam} line={singleLegLine.data} directs={directCount} singleLeg={singleLeg} entries={singleLegEntries} reentries={singleLegReentries}/>}
+        {networkView === "reentry" && <ReentryView address={address} line={singleLegLine.data} directs={directCount} singleLeg={singleLeg} entries={singleLegEntries} reentries={singleLegReentries}/>}
       </div>}
 
       {tab === "royalty" && <div className="db-stack">
@@ -1091,6 +1105,10 @@ function Referrals({ address, participant, onParticipate }: { address?: Address;
               <div><small>Week closes</small><b className="ss-small">{weekEnds}</b></div>
             </div>
             <div className="ss-progress"><div><span>{Number(weeklyDirects ?? 0n) >= superstarMin ? "Qualified — keep recruiting to stay on top" : `${superstarMin - Number(weeklyDirects ?? 0n)} more directs this week to qualify`}</span><b>{Math.min(Number(weeklyDirects ?? 0n), superstarMin)} / {superstarMin}</b></div><div className="ss-bar"><i style={{ width: `${Math.min(100, Number(weeklyDirects ?? 0n) / Math.max(1, superstarMin) * 100)}%` }}/></div></div>
+            <p className="db-foot-note">After the week ends, closing it on-chain credits the qualifying winner. The prize can then be withdrawn with their other rewards.</p>
+            {previousWinner && !previousClosed && protocolAddress && <button className="pill" disabled={closeWeekBusy || weekClosed} onClick={closeSuperstarWeek}>{closeWeekBusy ? "Closing week…" : weekClosed ? "Week closed" : `Close Superstar week ${previousWeek}`}</button>}
+            {previousClosed && previousWinner?.toLowerCase() === address.toLowerCase() && <button className="pill" disabled={!availableBalance || claimBusy} onClick={doClaim}>{claimBusy ? "Withdrawing…" : "Withdraw rewards"} {!claimBusy && <ArrowUpRight size={15}/>}</button>}
+            {(closeWeekError || closeWeekReceipt.data?.status === "reverted") && <p className="db-error">{closeWeekError ?? "The week closure transaction failed."}</p>}
           </div>
         </div>
 
@@ -1350,16 +1368,16 @@ function useLevelQuotes(kind: "working" | "nonworking") {
 }
 
 /** Working tab: the position architecture and contract-read economics. */
-function WorkingMatrixView({ address, team, workingLevel }: { address?: Address; team?: bigint; workingLevel?: number }) {
+function WorkingMatrixView({ address, directCount, workingLevel }: { address?: Address; directCount?: bigint; workingLevel?: number }) {
   const working = useLevelQuotes("working");
-  return <PoolMatrixPanel kind="working" address={address} team={team} currentLevel={workingLevel} maxLevel={15} quotes={working}/>;
+  return <PoolMatrixPanel kind="working" address={address} directCount={directCount} currentLevel={workingLevel} maxLevel={15} quotes={working}/>;
 }
 
 /** Non-Working: positions fill only with team members who entered by reaching Single-Leg Level 1. */
 /** Non-Working: every member enters on joining, so positions fill with your whole 10-level team. */
-function NonWorkingTree({ address, team, currentLevel }: { address?: Address; team?: bigint; currentLevel?: number }) {
+function NonWorkingTree({ address, currentLevel }: { address?: Address; currentLevel?: number }) {
   const values = useLevelQuotes("nonworking");
-  return <PoolMatrixPanel kind="nonworking" address={address} team={team} currentLevel={currentLevel} maxLevel={15} quotes={values}/>;
+  return <PoolMatrixPanel kind="nonworking" address={address} currentLevel={currentLevel} maxLevel={15} quotes={values}/>;
 }
 
 /** Contract `_queueTableDistribution`: 80% to the achiever, 10% to U1 and 10% across U2–U9. */
@@ -1367,54 +1385,57 @@ const tableIncome = (distributable?: bigint) => distributable === undefined ? un
 const tableUpline = (distributable?: bigint) => distributable === undefined ? undefined : distributable - distributable * 8_000n / 10_000n;
 const dollars = (value?: bigint) => value === undefined ? "—" : `$${formatToken(value)}`;
 
-function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0, maxLevel, quotes }: {
-  kind: "working" | "nonworking"; address?: Address; team?: bigint; currentLevel?: number; maxLevel: number; quotes: (WorkingQuote | undefined)[];
+const POSITION_PAGE_SIZE = 30n;
+
+function PoolMatrixPanel({ kind, address, directCount = 0n, currentLevel = 0, maxLevel, quotes }: {
+  kind: "working" | "nonworking"; address?: Address; directCount?: bigint; currentLevel?: number; maxLevel: number; quotes: (WorkingQuote | undefined)[];
 }) {
-  void team;
-  // Self-funding matrices: levels come from the contract; a level fills with entries placed in your matrix.
-  const currentLevel = contractLevel;
   const matrixSize = (level: number) => level * 2;
   const initialLevel = Math.min(maxLevel, Math.max(1, currentLevel + 1));
   const [selectedLevel, setSelectedLevel] = useState(initialLevel);
+  const [positionOffset, setPositionOffset] = useState(0n);
   useEffect(() => { setSelectedLevel(Math.min(maxLevel, Math.max(1, currentLevel + 1))); }, [currentLevel, maxLevel]);
-  const teamQuery = useOnchainTeam(address, 1);
-  const directs = [...(teamQuery.data ?? [])].sort((a, b) => Number(BigInt(a.memberId) - BigInt(b.memberId)));
-  // Entries placed in your matrix at the level you are filling (key: level, or level + 16 for Non-Working).
-  const fillReads = useReadContracts({
-    allowFailure: true,
-    contracts: protocolAddress && address ? Array.from({ length: maxLevel }, (_, index) => ({
-      address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "matrixFilled" as const,
-      args: [address, kind === "working" ? index + 1 : index + 17] as const,
-    })) : [],
-    query: { enabled: Boolean(protocolAddress && address), refetchInterval: 15_000 },
+  useEffect(() => { setPositionOffset(0n); }, [address, selectedLevel]);
+  const workingLevelOne = kind === "working" && selectedLevel === 1;
+  const matrixAddress = protocolAddress;
+  const target = { address: matrixAddress, abi: protocolAbi, chainId: requiredChainId };
+  const canRead = Boolean(protocolAddress && address);
+  const fundingRule = useReadContract({ ...target, functionName: "WORKING_UPGRADE_POSITIONS", query: { enabled: Boolean(protocolAddress) && kind === "working", retry: false } });
+  const fundingPositions = kind === "working" ? fundingRule.data : undefined;
+  const thresholdFor = (level: number) => fundingPositions && level > 1 && level < maxLevel ? fundingPositions : matrixSize(level);
+  const totalWorking = useReadContract({
+    ...target, functionName: "workingPositionsFilled", args: address && kind === "working" && !workingLevelOne ? [address, selectedLevel] : undefined,
+    query: { enabled: canRead && kind === "working" && !workingLevelOne, retry: false, refetchInterval: 15_000 },
+  });
+  const thresholdFill = useReadContract({
+    ...target, functionName: "matrixFilled", args: address ? [address, selectedLevel + (kind === "nonworking" ? 16 : 0)] : undefined,
+    query: { enabled: canRead && !workingLevelOne && totalWorking.data === undefined, refetchInterval: 15_000 },
   });
   const quote = quotes[selectedLevel - 1];
-  const required = Number(quote?.[0] ?? BigInt(matrixSize(selectedLevel)));
-  /** Filled positions: all of a completed level, the live count for the level you are filling, none above. */
-  const filledAt = (level: number) => {
-    const size = matrixSize(level);
-    if (currentLevel >= level) return size;
-    if (level !== currentLevel + 1) return 0;
-    if (kind === "working" && level === 1) return Math.min(directs.length, size);
-    return Number(fillReads.data?.[level - 1]?.result ?? 0);
-  };
-  // Working Level 1 holds all your directs (every direct after the 2nd pays you again); other levels are fixed.
-  const workingLevelOne = kind === "working" && selectedLevel === 1;
-  const holders = workingLevelOne ? directs : [];
-  const filledCount = workingLevelOne ? directs.length : filledAt(selectedLevel);
-  const nodeCount = workingLevelOne ? Math.max(required, filledCount) : required;
-  const positions = Array.from({ length: nodeCount }, (_, index) => index + 1);
-  const filledInLevel = Math.min(filledCount, required);
-  const unlimited = workingLevelOne;
-  const levelActive = (level: number) => level <= currentLevel + 1;
-  const completes = true;
+  const required = thresholdFor(selectedLevel);
+  const fundingUpgrade = Boolean(fundingPositions && selectedLevel < maxLevel);
+  const reached = currentLevel >= selectedLevel;
+  const filledCount = workingLevelOne ? directCount : totalWorking.data ?? BigInt(reached ? required : thresholdFill.data ?? 0);
+  const filledInLevel = filledCount >= BigInt(required) ? required : Number(filledCount);
+  const fundedBeforeUpgrade = fundingUpgrade && selectedLevel > 1 && selectedLevel === currentLevel + 1 && filledInLevel === required;
+  const syncUpgrade = useWriteContract();
+  const syncReceipt = useWaitForTransactionReceipt({ hash: syncUpgrade.data, chainId: requiredChainId });
+  const syncConfirmed = syncReceipt.data?.status === "success";
+  const teamSize = BigInt(matrixSize(selectedLevel));
+  const positionCount = filledCount > teamSize ? filledCount : teamSize;
+  const offset = positionOffset < positionCount ? positionOffset : 0n;
+  const end = offset + POSITION_PAGE_SIZE < positionCount ? offset + POSITION_PAGE_SIZE : positionCount;
+  const positions = Array.from({ length: Number(end - offset) }, (_, index) => offset + BigInt(index + 1));
+  const holders = useReadContract({
+    ...target, functionName: "getDirectReferrals", args: address ? [address, offset, POSITION_PAGE_SIZE] : undefined,
+    query: { enabled: canRead && workingLevelOne, refetchInterval: 15_000 },
+  });
+  const unlimited = workingLevelOne || totalWorking.data !== undefined;
   const upgradedInto = Math.min(maxLevel, currentLevel + 1);
-  const levelState = (level: number) => currentLevel >= level ? "reached"
+  const levelState = (level: number) => currentLevel >= level ? (kind === "working" ? "current" : "reached")
     : level === upgradedInto ? "unlocked"
     : "locked";
   const stateLabel = { reached: "Complete", current: "In progress", unlocked: "Unlocked", locked: "Locked" } as const;
-  const reached = currentLevel >= selectedLevel;
-  const current = levelActive(selectedLevel);
   const name = kind === "working" ? "Working" : "Non-Working";
   const title = `${name} Matrix`;
 
@@ -1440,110 +1461,116 @@ function PoolMatrixPanel({ kind, address, team, currentLevel: contractLevel = 0,
         </div>
       </div>
       <div className="pool-connector"/>
-      <div className="pool-completion"><span>Completion positions</span><b>{filledInLevel}/{required} toward automatic advancement</b></div>
-      <div className={`pool-tree${nodeCount > 8 ? " dense" : ""}`} style={{ "--cols": Math.min(nodeCount, 8) } as CSSProperties}>
-        {positions.map(position => {
+      <div className="pool-completion"><span>{fundingUpgrade ? "Upgrade funding" : "Completion positions"}</span><b>{filledInLevel}/{required} {fundingUpgrade ? `entries toward Level ${selectedLevel + 1} · ${dollars(quote?.[3])} total` : selectedLevel === maxLevel ? "toward completion" : "toward automatic advancement"}</b></div>
+      <div className={`pool-tree${positions.length > 8 ? " dense" : ""}`} style={{ "--cols": Math.min(positions.length, 8) } as CSSProperties}>
+        {positions.map((position, index) => {
           const filled = position <= filledCount;
-          const holder = holders[position - 1];
-          return <div className={`pool-node ${filled ? "filled" : "available"}${position > required ? " extra" : ""}`} key={position} title={holder ? holder.address : `Team position ${position}`}>
-            <i>{filled ? <Check size={14}/> : position}</i>
+          const holder = workingLevelOne ? holders.data?.[index] : undefined;
+          return <div className={`pool-node ${filled ? "filled" : "available"}${position > teamSize ? " extra" : ""}`} key={position.toString()} title={holder ?? `Team position ${position}`}>
+            <i>{filled ? <Check size={14}/> : position.toString()}</i>
             <b>{filled ? "FILLED" : "OPEN"}</b>
-            <small>{holder ? <span className="mono">{shortAddress(holder.address)}</span> : `Position ${position}`}</small>
+            <small>{holder ? <span className="mono">{shortAddress(holder)}</span> : `Position ${position}`}</small>
             {holder && <em>Direct</em>}
           </div>;
         })}
       </div>
+      {positionCount > POSITION_PAGE_SIZE && <div className="pool-level-stepper" aria-label="Matrix position pages">
+        <button aria-label="Previous positions" disabled={offset === 0n} onClick={() => setPositionOffset(offset - POSITION_PAGE_SIZE)}><ChevronLeft size={15}/></button>
+        <span>{`${offset + 1n}–${end} of ${positionCount} positions`}</span>
+        <button aria-label="Next positions" disabled={end === positionCount} onClick={() => setPositionOffset(end)}><ChevronRight size={15}/></button>
+      </div>}
       {!address
         ? <p className="pool-wallet-note">Connect your wallet to view this {name.toLowerCase()} team.</p>
-        : fillReads.isError && <p className="pool-wallet-note">Couldn't read your matrix from the contract right now.</p>}
+        : (workingLevelOne ? holders.isError : thresholdFill.isError && totalWorking.data === undefined) && <p className="pool-wallet-note">Couldn't read your matrix from the contract right now.</p>}
       <div className="pool-level-copy">
-        <b>{unlimited ? `${filledCount} direct ${filledCount === 1 ? "member" : "members"} · Level 1 completes with your 2nd direct` : `${filledInLevel} of ${required} positions filled`}</b>
-        <span>{reached ? "Complete · level paid and upgraded" : selectedLevel === upgradedInto ? `Unlocked · filling its ${required} positions ${kind === "nonworking" ? "from the global queue" : "with entries from your team"}` : `Locked · complete Level ${selectedLevel - 1} first`}</span>
+        <b>{workingLevelOne ? `${filledCount} direct ${filledCount === 1n ? "member" : "members"} · Level 1 completes with your 2nd direct` : unlimited ? `${filledCount.toLocaleString()} paid ${filledCount === 1n ? "position" : "positions"} · unlimited` : `${filledInLevel} of ${required} positions filled`}</b>
+        <span>{reached ? kind === "working" ? `${selectedLevel < maxLevel ? "Next level unlocked" : "In progress"} · still accepting paid entries` : "Complete · level paid and upgraded" : selectedLevel === upgradedInto ? fundingUpgrade ? `${required} entries fund your next level` : `Unlocked · ${required} positions to complete` : `Locked · complete Level ${selectedLevel - 1} first`}</span>
       </div>
       <div className="pool-focus-progress"><i style={{ width: `${filledInLevel / required * 100}%` }}/></div>
-      <p>{unlimited
+      {fundedBeforeUpgrade && address && matrixAddress && <div>
+        <button className="db-btn" disabled={syncUpgrade.isPending || syncReceipt.isLoading || syncConfirmed} onClick={() => syncUpgrade.writeContract({ ...target, address: matrixAddress, functionName: "syncWorkingUpgrade", args: [address] })}>{syncConfirmed ? "Upgrade recorded" : `Unlock funded Level ${selectedLevel + 1}`}</button>
+        {(syncUpgrade.isError || syncReceipt.isError || syncReceipt.data?.status === "reverted") && <p className="pool-wallet-note">The unlock transaction failed. Try again.</p>}
+      </div>}
+      <p>{workingLevelOne
         ? <>Level 1 holds your direct referrals. Your 1st direct pays you; your 2nd direct's ID amount is your auto-upgrade into Level 2; every direct after that pays you again.</>
         : kind === "nonworking"
           ? <>First come, first served across the whole platform: everyone entering Non-Working Level {selectedLevel} joins one global queue, and each new entry fills the member at the front, whoever referred them. When all {required} of your positions are filled, the level pays out and your auto-upgrade puts you in the Level {selectedLevel + 1} queue.</>
-          : selectedLevel === 2
-            ? <>Working Level 2 completes after four paid entries. Positions 1 and 2 fund the automatic 30 USDT upgrade into Level 3. Position 3 immediately adds your 12 USDT member share, and position 4 immediately adds another 12 USDT.</>
-            : selectedLevel === 15
-              ? <>Level 15 has no further auto-upgrade, so every paid position immediately adds your 80% member share. The level completes when all {required} positions are filled.</>
-              : <>Positions 1 and 2 fund your automatic upgrade into Level {selectedLevel + 1}. Every paid position from 3 onward immediately adds your 80% member share. The level completes when all {required} positions are filled.</>}</p>
+          : selectedLevel === maxLevel
+            ? <>Every paid position immediately adds your 80% member share. Level {selectedLevel} completes at {required} paid positions.{unlimited && " New entries keep paying after completion."}</>
+            : fundingUpgrade
+              ? <>The first two paid entries fund your automatic upgrade. The second entry unlocks Level {selectedLevel + 1}. Every later entry at this level immediately adds your 80% member share.</>
+              : <>Positions 1 and 2 fund your automatic upgrade into Level {selectedLevel + 1} once you reach {required} paid positions. Every paid position from 3 onward immediately adds your 80% member share.{unlimited && " New entries keep paying after the upgrade."}</>}</p>
     </div>
 
     <div className="pool-economics">
       <div className="pool-economics-head">
-        <div><small>CONTRACT-VERIFIED ECONOMICS</small><h4>{title}</h4></div>
-        <div className="pool-selected-summary"><span>Selected Level {selectedLevel}</span><b>{required} team required</b></div>
+        <div><small>{fundingPositions ? "UPGRADE FUNDING AND ENTRY INCOME" : "ECONOMICS AT COMPLETION"}</small><h4>{title}</h4></div>
+        <div className="pool-selected-summary"><span>Selected Level {selectedLevel}</span><b>{required} {fundingUpgrade ? "entries to fund the upgrade" : "positions to complete"}</b></div>
       </div>
-      <div className="pool-table-wrap"><table className="pool-table"><thead><tr><th>Level</th><th>Team</th><th className="num">ID amount</th><th className="num">Turnover</th><th className="num">Auto upgrade</th><th className="num">Income</th><th className="num">Upline</th><th>Status</th></tr></thead><tbody>
+      <div className="pool-table-wrap"><table className="pool-table"><thead><tr><th>Level</th><th>{fundingPositions ? "Upgrade positions" : "Positions to complete"}</th><th className="num">ID amount</th>{!fundingPositions && <th className="num">Turnover</th>}<th className="num">Auto upgrade</th><th className="num">{fundingPositions ? "Income per paying entry" : "Income"}</th><th className="num">{fundingPositions ? "Upline per paying entry" : "Upline"}</th><th>Status</th></tr></thead><tbody>
         {Array.from({ length: maxLevel }, (_, index) => {
           const level = index + 1;
           const row = quotes[index];
           const rowState = levelState(level);
+          const distribution = row?.[fundingPositions ? 1 : 4];
           return <tr key={level} className={`${selectedLevel === level ? "selected" : ""} ${rowState}`} onClick={() => setSelectedLevel(level)} tabIndex={0} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") setSelectedLevel(level); }}>
             <td data-label="Level"><span className="pool-td-level">Level </span>{level}</td>
-            <td data-label="Team">{Number(row?.[0] ?? BigInt(matrixSize(level)))}</td>
+            <td data-label={fundingPositions ? "Upgrade positions" : "Positions to complete"}>{fundingPositions && level === maxLevel ? "—" : thresholdFor(level)}</td>
             <td data-label="ID amount" className="num">{dollars(row?.[1])}</td>
-            <td data-label="Turnover" className="num">{dollars(row?.[2])}</td>
+            {!fundingPositions && <td data-label="Turnover" className="num">{dollars(row?.[2])}</td>}
             <td data-label="Auto upgrade" className="num">{dollars(row?.[3])}</td>
-            <td data-label="Income" className="num income">{dollars(tableIncome(row?.[4]))}</td>
-            <td data-label="Upline" className="num">{dollars(tableUpline(row?.[4]))}</td>
+            <td data-label={fundingPositions ? "Income per paying entry" : "Income"} className="num income">{dollars(tableIncome(distribution))}</td>
+            <td data-label={fundingPositions ? "Upline per paying entry" : "Upline"} className="num">{dollars(tableUpline(distribution))}</td>
             <td data-label="Status"><span className="pool-status">{stateLabel[rowState]}</span></td>
           </tr>;
         })}
       </tbody></table></div>
-      <p className="tree-disclaimer">Every value is read from the deployed contract. Income is the achiever's 80% of the amount left after auto-upgrade; Upline is the remaining 20% (10% to U1 and 10% shared across U2–U9).</p>
+      <p className="tree-disclaimer">{fundingPositions ? "Each paying entry distributes 80% to the member and up to 20% to eligible uplines." : "This table shows turnover and distributions at the completion threshold. The member share is 80% of the amount available after funding the upgrade."}</p>
     </div>
   </div>;
 }
 
 /** Single-Leg re-entry: the one-time $9 re-entry at Single-Leg Level 3, for you and for each member of your team. */
-function ReentryView({ address, slTeam, line, directs, singleLeg, entries, reentries }: {
-  address?: Address; slTeam?: number; line?: { reentry: number; reentryLevel: number; reentryTeam: number; metAt: boolean[] }; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
+function ReentryView({ address, line, directs, singleLeg, entries, reentries }: {
+  address?: Address; line?: SingleLegLineData; directs: number; singleLeg?: number; entries?: bigint; reentries?: bigint;
 }) {
-  void slTeam;
+  const levels = useSingleLegLevels();
+  const { members: needTeam, directs: needDirects, extra: amount } = levels[2];
   const teamQuery = useOnchainTeam(address);
   const members = teamQuery.data ?? [];
   const reads = useReadContracts({
     allowFailure: true,
-    contracts: protocolAddress ? [
-      { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [3] as const },
-      ...members.flatMap(member => [
+    contracts: protocolAddress ? members.flatMap(member => [
         { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegReentries" as const, args: [member.address] as const },
         { address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegLevel" as const, args: [member.address] as const },
-      ]),
-    ] : [],
-    query: { enabled: configured, refetchInterval: 30_000 },
+      ]) : [],
+    query: { enabled: configured && members.length > 0, refetchInterval: 30_000 },
   });
-  const quote = reads.data?.[0]?.result as SingleLegQuote | undefined;
-  const needTeam = Number(quote?.[0] ?? 30n);
-  const needDirects = Number(quote?.[1] ?? 1n);
-  const amount = quote?.[3] ?? 9_000_000n;
-  // Level 3 counts people after you who reached Level 2 (met once the Level 3 cursor passes you).
-  const teamValue = line?.metAt[3] ? needTeam : 0;
-  const mine = Number(reentries ?? 0n);
+  const teamValue = singleLegTeamProgress(line, 3, needTeam);
+  const mine = line?.reentry ? 1 : Number(reentries ?? 0n);
   const reentered = members
-    .map((member, index) => ({ ...member, reentries: Number((reads.data?.[1 + index * 2]?.result as bigint | undefined) ?? 0n), level: Number(reads.data?.[2 + index * 2]?.result ?? 0) }))
+    .map((member, index) => ({ ...member, reentries: Number(reads.data?.[index * 2]?.result ?? 0), level: Number(reads.data?.[index * 2 + 1]?.result ?? 0) }))
     .filter(member => member.reentries > 0);
-  const teamProgress = Math.min(100, teamValue / needTeam * 100);
+  const teamProgress = Math.min(100, (teamValue ?? 0) / needTeam * 100);
 
   return <div className="progression-view reentry-view">
-    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {formatToken(amount)} USDT re-entry</h4></div><p>When a member reaches Single-Leg Level 3 ({needTeam} people after them in the line who reached Level 2, plus {needDirects} directs), they get a new position at the end of the line that climbs the levels and pays again. The contract records a one-time re-entry funded with {formatToken(amount)} USDT from the Single-Leg pool.</p></div>
+    <div className="view-heading"><div><small>SINGLE-LEG RE-ENTRY</small><h4>One-time {usdt(amount)} USDT re-entry</h4></div><p>Completing Single-Leg Level 3 on your original position gives you a new position at the end of the global line. It progresses through the same 10 levels and uses your existing direct referrals.</p></div>
     <div className="db-summary">
-      <div className="primary"><span className="db-sum-icon"><Zap size={16}/></span><small>Your re-entries</small><b>{reentries === undefined ? "—" : mine}</b><span>{mine > 0 ? "Re-entry completed at Single-Leg Level 3" : `Unlocks at Single-Leg Level 3 · you are at Level ${singleLeg ?? 0}`}</span></div>
+      <div className="primary"><span className="db-sum-icon"><Zap size={16}/></span><small>Your re-entries</small><b>{reentries === undefined && !mine ? "—" : mine}</b><span>{mine > 0 ? "Re-entry created at Single-Leg Level 3" : `Unlocks at Single-Leg Level 3 · you are at Level ${singleLeg ?? 0}`}</span></div>
       <div><span className="db-sum-icon"><Layers size={16}/></span><small>Your re-entry position</small><b>{line?.reentry ? `#${line.reentry}` : "—"}</b><span>{line?.reentry ? `Level ${line.reentryLevel} / 10 · ${line.reentryTeam.toLocaleString()} joined after it` : `${entries?.toString() ?? "1"} entry so far`}</span></div>
       <div><span className="db-sum-icon"><Users size={16}/></span><small>Team members re-entered</small><b>{teamQuery.isLoading ? "—" : reentered.length.toLocaleString()}</b><span>Across your 10-level team</span></div>
     </div>
 
+    {line?.reentry ? <SingleLegNextLevel address={address} directValue={directs} line={line} next={levels[line.reentryLevel]} reentry/>
+      : mine > 0 && <p className="db-foot-note">Re-entry progress is currently unavailable.</p>}
+
     {mine === 0 && <div className="db-card reentry-progress">
       <div className="db-section-head"><div><small>YOUR PROGRESS</small><h3>Road to your re-entry</h3></div><span className="db-tag">Level {singleLeg ?? 0} / 3</span></div>
       <div className="club-reqs">
-        <div><div><span>After you at Level 2+</span><b>{Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
+        <div><div><span>After you at Level 2+</span><b>{teamValue === undefined ? "—" : Math.min(teamValue, needTeam).toLocaleString()} / {needTeam}</b></div><div className="db-bar"><i style={{ width: `${teamProgress}%` }}/></div></div>
         <div><div><span>Direct referrals</span><b>{Math.min(directs, needDirects)} / {needDirects}</b></div><div className="db-bar"><i style={{ width: `${Math.min(100, directs / Math.max(1, needDirects) * 100)}%` }}/></div></div>
       </div>
-      <p className="db-foot-note">{teamValue >= needTeam && directs >= needDirects ? "Requirements met — your re-entry is recorded with the next team registration." : `${needTeam} people after you need to reach Single-Leg Level 2.`}</p>
+      <p className="db-foot-note">{teamValue !== undefined && teamValue >= needTeam && directs >= needDirects ? "Requirements met. Your re-entry is recorded when the contract processes your position." : `${needTeam} positions after you must reach Single-Leg Level 2.`}</p>
     </div>}
 
     <div className="db-card">
@@ -1569,66 +1596,98 @@ const SINGLE_LEG_TABLE = [
 const usdt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
 type SingleLegLineData = NonNullable<ReturnType<typeof useSingleLegLine>["data"]>;
-function SingleLegTree({ address, directs, currentLevel, line, lineLoading, lineError }: { address?: Address; directs?: bigint; currentLevel?: number; line?: SingleLegLineData; lineLoading: boolean; lineError: boolean }) {
+
+function singleLegTeamProgress(line: SingleLegLineData | undefined, level: number, target: number, reentry = false) {
+  if (!line) return undefined;
+  if (reentry) {
+    if (!line.reentry) return undefined;
+    if (level <= 2) return line.reentryTeam;
+    if (line.reentryMetAt[level]) return target;
+    return line.reentryLevel === level - 1 ? line.reentryQualifiedAfter : undefined;
+  }
+  if (level <= 2) return line.team;
+  if (line.metAt[level]) return target;
+  return line.qualifiedLevel === level - 1 ? line.qualifiedAfter : undefined;
+}
+
+function useSingleLegLevels() {
   const quotes = useReadContracts({
     allowFailure: true,
     contracts: protocolAddress ? Array.from({ length: 10 }, (_, index) => ({ address: protocolAddress, abi: protocolAbi, chainId: requiredChainId, functionName: "singleLegQuote" as const, args: [index + 1] as const })) : [],
     query: { enabled: configured, refetchInterval: 60_000, retry: 2 },
   });
   const toUsdt = (v: bigint) => Number(v) / 1e6;
-  const levels = SINGLE_LEG_TABLE.map(([members, directNeed, income, extra, upline], index) => {
+  return SINGLE_LEG_TABLE.map(([members, directNeed, income, extra, upline], index) => {
     const quote = quotes.data?.[index]?.result as SingleLegQuote | undefined;
     return quote
       ? { level: index + 1, members: Number(quote[0]), directs: Number(quote[1]), income: toUsdt(quote[2]), extra: toUsdt(quote[3]), upline: toUsdt(quote[4]) }
       : { level: index + 1, members, directs: directNeed, income, extra, upline };
   });
-  const teamValue = line?.team ?? 0;
-  const directValue = Number(directs ?? 0n);
-  const done = currentLevel ?? 0;
-  const next = levels[done];
+}
+
+type SingleLegLevel = ReturnType<typeof useSingleLegLevels>[number];
+
+function singleLegAllocationNote(level: SingleLegLevel, reentry = false) {
+  if (reentry || level.extra === 0) return undefined;
+  return level.level === 1 ? `${usdt(level.extra)} USDT → Global pool` : `${usdt(level.extra)} USDT → 1-time re-entry`;
+}
+
+function SingleLegNextLevel({ address, directValue, line, next, reentry = false }: {
+  address?: Address; directValue: number; line?: SingleLegLineData; next?: SingleLegLevel; reentry?: boolean;
+}) {
+  if (!next) return <div className="sl-next sl-complete"><Award size={22}/><div><h4>All 10 levels complete</h4><p>You have unlocked every Single-Leg reward.</p></div></div>;
+
   // Levels 1 and 2 use the global count after your position; Level 3+ counts qualified positions.
-  const usesGlobalCount = Boolean(next && next.level <= 2);
-  const nextMet = next ? (usesGlobalCount ? teamValue >= next.members : Boolean(line?.metAt[next.level])) : true;
-  const countedTeam = !next ? 0 : usesGlobalCount ? teamValue : nextMet ? next.members : 0;
-  const teamLabel = !next || usesGlobalCount ? "Global positions after you" : `After you at Level ${next.level - 1}+`;
-  const netReward = (level: typeof levels[number]) => level.income;
-  const allocationNote = (level: typeof levels[number]) => level.extra === 0 ? undefined : level.level === 1 ? `${usdt(level.extra)} USDT → Global pool` : `${usdt(level.extra)} USDT → 1-time re-entry`;
-  const earned = levels.slice(0, done).reduce((sum, level) => sum + netReward(level), 0);
-  const remaining = levels.slice(done).reduce((sum, level) => sum + netReward(level), 0);
-  const teamLeft = next ? Math.max(0, next.members - countedTeam) : 0;
-  const directsLeft = next ? Math.max(0, next.directs - directValue) : 0;
+  const usesGlobalCount = next.level <= 2;
+  const countedTeam = singleLegTeamProgress(line, next.level, next.members, reentry);
+  const positionLabel = reentry ? "your re-entry" : "you";
+  const teamLabel = usesGlobalCount ? `Global positions after ${positionLabel}` : `After ${positionLabel} at Level ${next.level - 1}+`;
+  const teamLeft = countedTeam !== undefined ? Math.max(0, next.members - countedTeam) : undefined;
+  const directsLeft = Math.max(0, next.directs - directValue);
+  const allocation = singleLegAllocationNote(next, reentry);
   const todo = [
-    teamLeft > 0 && ((next?.level ?? 1) <= 2
-      ? `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "person" : "people"} to join the platform after you`
-      : `have ${next?.members.toLocaleString()} people after you reach Single-Leg Level ${(next?.level ?? 2) - 1}`),
+    teamLeft !== undefined && teamLeft > 0 && (usesGlobalCount
+      ? `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "position" : "positions"} after ${positionLabel}`
+      : `wait for ${teamLeft.toLocaleString()} more ${teamLeft === 1 ? "position" : "positions"} after ${positionLabel} to reach Single-Leg Level ${next.level - 1}`),
     directsLeft > 0 && `personally invite ${directsLeft} more ${directsLeft === 1 ? "person" : "people"}`,
   ].filter(Boolean) as string[];
   const bar = (have: number, need: number) => <div className="sl-bar"><i style={{ width: `${need ? Math.min(100, have / need * 100) : 100}%` }}/></div>;
+
+  return <div className="sl-next">
+      <div className="sl-next-head">
+        <div><small>UNLOCKED · IN PROGRESS</small><h4>Level {next.level} <em>of 10</em></h4></div>
+        <div className="sl-reward"><small>NET REWARD</small><b>{usdt(next.income)} <em>USDT</em></b></div>
+      </div>
+      <div className="sl-req">
+        <div className={teamLeft === 0 ? "ok" : ""}><div><span><Users size={15}/> {teamLabel}</span><b>{countedTeam === undefined ? "—" : Math.min(countedTeam, next.members).toLocaleString()} / {next.members.toLocaleString()}</b></div>{bar(countedTeam ?? 0, next.members)}<small>{teamLeft === 0 ? <><Check size={12}/> Target met</> : teamLeft === undefined ? "Progress unavailable" : `${teamLeft.toLocaleString()} more needed`}</small></div>
+        <div className={directsLeft === 0 ? "ok" : ""}><div><span><UserRoundCheck size={15}/> Direct referrals</span><b>{Math.min(directValue, next.directs)} / {next.directs}</b></div>{bar(directValue, next.directs)}<small>{directsLeft === 0 ? <><Check size={12}/> Target met</> : `${directsLeft} more needed`}</small></div>
+      </div>
+      <p className="sl-todo"><Zap size={15}/><span>{!address ? "Connect your wallet to see your progress." : teamLeft === undefined ? "Both requirements must be met to earn the reward." : todo.length ? <>To earn <b>{usdt(next.income)} USDT</b>, {todo.join(" and ")}.{allocation ? ` ${allocation}.` : ""}</> : "Requirements met. The reward is recorded when the contract processes your position."}</span></p>
+    </div>;
+}
+
+function SingleLegTree({ address, directs, currentLevel, line, lineLoading, lineError }: { address?: Address; directs?: bigint; currentLevel?: number; line?: SingleLegLineData; lineLoading: boolean; lineError: boolean }) {
+  const levels = useSingleLegLevels();
+  const teamValue = line?.team ?? 0;
+  const directValue = Number(directs ?? 0n);
+  const done = line?.primaryLevel ?? currentLevel ?? 0;
+  const earned = levels.slice(0, done).reduce((sum, level) => sum + level.income, 0);
+  const remaining = levels.slice(done).reduce((sum, level) => sum + level.income, 0);
 
   return <div className="progression-view sl">
     <div className="sl-explain">
       <div><span>1</span><b>The global line grows</b><p>Level 1 pays at 10 global positions after you; Level 2 pays at 25 positions after you. Level 3 and above count members who reached the level below.</p></div>
       <div><span>2</span><b>Invite people yourself</b><p>Each level also needs a few members you referred directly.</p></div>
-      <div><span>3</span><b>Unlock a one-time reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
+      <div><span>3</span><b>Earn the level reward</b><p>When both targets are met, the level's reward is added to your team income automatically.</p></div>
     </div>
 
-    {next ? <div className="sl-next">
-      <div className="sl-next-head">
-        <div><small>YOUR NEXT GOAL</small><h4>Level {next.level} <em>of 10</em></h4></div>
-        <div className="sl-reward"><small>NET REWARD</small><b>{usdt(netReward(next))} <em>USDT</em></b></div>
-      </div>
-      <div className="sl-req">
-        <div className={teamLeft === 0 ? "ok" : ""}><div><span><Users size={15}/> {teamLabel}</span><b>{Math.min(countedTeam, next.members).toLocaleString()} / {next.members.toLocaleString()}</b></div>{bar(countedTeam, next.members)}<small>{teamLeft === 0 ? <><Check size={12}/> Target met</> : `${teamLeft.toLocaleString()} more needed`}</small></div>
-        <div className={directsLeft === 0 ? "ok" : ""}><div><span><UserRoundCheck size={15}/> Direct referrals</span><b>{Math.min(directValue, next.directs)} / {next.directs}</b></div>{bar(directValue, next.directs)}<small>{directsLeft === 0 ? <><Check size={12}/> Target met</> : `${directsLeft} more needed`}</small></div>
-      </div>
-      <p className="sl-todo"><Zap size={15}/><span>{address ? <>To unlock <b>{usdt(netReward(next))} USDT</b>, {todo.join(" and ")}.{allocationNote(next) ? ` ${allocationNote(next)}.` : ""}</> : "Connect your wallet to see your progress."}</span></p>
-    </div> : <div className="sl-next sl-complete"><Award size={22}/><div><h4>All 10 levels complete</h4><p>You have unlocked every Single-Leg reward.</p></div></div>}
+    <SingleLegNextLevel address={address} directValue={directValue} line={line} next={levels[done]}/>
 
     <div className="sl-summary">
       <div><small>LEVELS DONE</small><b>{done} / 10</b></div>
       <div><small>YOUR SINGLE-LEG TEAM</small><b>{teamValue.toLocaleString()} <em>members</em></b></div>
-      <div><small>UNLOCKED SO FAR</small><b>{usdt(earned)} <em>USDT</em></b></div>
-      <div><small>STILL AVAILABLE</small><b>{usdt(remaining)} <em>USDT</em></b></div>
+      <div><small>LEVEL REWARDS EARNED</small><b>{usdt(earned)} <em>USDT</em></b></div>
+      <div><small>REMAINING LEVEL REWARDS</small><b>{usdt(remaining)} <em>USDT</em></b></div>
     </div>
 
     <div className="sl-team">
@@ -1651,14 +1710,12 @@ function SingleLegTree({ address, directs, currentLevel, line, lineLoading, line
       <div className="sl-row sl-th" role="row"><span>Level</span><span>Team needed</span><span>Direct referrals</span><span>Your reward</span><span>Status</span></div>
       {levels.map(l => {
         const state = l.level <= done ? "done" : l.level === done + 1 ? "next" : "locked";
-        // Level 1 counts everyone after you; Level L counts people after you who reached Level L-1.
-        const met = l.level === 1 ? teamValue >= l.members : Boolean(line?.metAt[l.level]);
         return <div className={`sl-row ${state}`} role="row" key={l.level}>
           <span className="sl-lvl"><i>{state === "done" ? <Check size={13}/> : l.level}</i><em>Level {l.level}</em></span>
-          <span data-label="Team">{l.members.toLocaleString()}{l.level > 1 && <small> at Level {l.level - 1}+</small>}</span>
+          <span data-label="Team">{l.members.toLocaleString()}{l.level > 2 && <small> at Level {l.level - 1}+</small>}</span>
           <span data-label="Directs">{l.directs}</span>
-          <span data-label="Reward" className="sl-amt"><span>{usdt(netReward(l))} USDT{allocationNote(l) && <small>{allocationNote(l)}</small>}</span></span>
-          <span className="sl-status">{state === "done" ? "Complete" : state === "next" ? l.level === 1 ? `In progress · ${Math.min(teamValue, l.members).toLocaleString()} / ${l.members}` : met ? "Members met · needs directs" : "In progress" : "Locked"}</span>
+          <span data-label="Reward" className="sl-amt"><span>{usdt(l.income)} USDT{singleLegAllocationNote(l) && <small>{singleLegAllocationNote(l)}</small>}</span></span>
+          <span className="sl-status">{state === "done" ? "Complete" : state === "next" ? "Unlocked · In progress" : "Locked"}</span>
         </div>;
       })}
     </div>

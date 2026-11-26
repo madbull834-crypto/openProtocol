@@ -33,6 +33,8 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Working Level 1 (team 2, ID 15): the 1st direct pays the sponsor 12 USDT and the uplines 3 USDT;
     /// this direct's whole 15 USDT is the sponsor's auto-upgrade into Level 2. Every later direct pays 12 + 3 again.
     uint64 public constant UPGRADE_DIRECT = 2;
+    /// @notice Working Levels 2–14 fund the next level with their first two entries.
+    uint8 public constant WORKING_UPGRADE_POSITIONS = 2;
     /// @notice Weekly directs needed to win the Superstar fund.
     uint64 public constant SUPERSTAR_MIN_DIRECTS = 5;
     /// @notice Directs added per star club to claim its royalty: 2 Star 4, 3 Star 8, 4 Star 12, 5 Star 16.
@@ -167,7 +169,7 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     uint256 public nonWorkingTicketAllocation;
 
     // ---- Appended in the self-funding matrix upgrade (uses 1 gap slot). ----
-    /// @notice Entries placed in a member's matrix at the level they are filling.
+    /// @notice Entries placed toward a member's matrix completion threshold.
     /// Key = level for Working, level + 16 for Non-Working.
     mapping(address => mapping(uint8 => uint8)) public matrixFilled;
 
@@ -183,9 +185,12 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     /// @notice Per level: (head << 64) | tail of `nonWorkingQueue`. The head member receives the next entry.
     mapping(uint8 => uint128) internal nonWorkingQueueBounds;
 
+    // Working entries received after the one-time advancement threshold.
+    mapping(address => mapping(uint8 => uint64)) private workingExtraPositions;
+
     // Storage reserved for future implementations. New state must be appended here
     // and the gap reduced by the same number of slots.
-    uint256[21] private __gap;
+    uint256[20] private __gap;
 
     event ParticipantRegistered(address indexed account, address indexed sponsor, uint64 indexed memberId, uint64 joinedAt);
     event MatrixPlaced(address indexed account, address indexed parent, uint64 position);
@@ -467,20 +472,46 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         }
     }
 
-    /// @dev Self-funding auto-upgrade matrix (Working Pool and Non-Working Pool tables). An entry into `level`
-    /// fills one position in the matrix of the nearest upline currently filling that level; with no such
-    /// upline the entry's ID amount stays in the reserve. Every payout is backed by entries already paid in.
+    /// @notice Working positions received, including entries after advancement.
+    function workingPositionsFilled(address account, uint8 level) external view returns (uint256) {
+        if (level == 1) return participants[account].directCount;
+        return uint256(matrixFilled[account][level]) + workingExtraPositions[account][level];
+    }
+
+    /// @notice Unlocks an upgrade already funded before the two-position rule took effect.
+    function syncWorkingUpgrade(address account) external {
+        uint8 level = workingLevel[account] + 1;
+        if (_workingUpgradeFunded(account, level)) _completeLevel(account, true, level);
+    }
+
+    function _workingUpgradeFunded(address account, uint8 level) private view returns (bool) {
+        return level > 1 && level < MAX_WORKING_LEVEL && matrixFilled[account][level] >= WORKING_UPGRADE_POSITIONS;
+    }
+
+    /// @dev A Working entry fills the nearest upline who unlocked the level, even after advancement.
+    /// With no eligible upline, the entry's ID amount stays in the reserve.
     function _enterMatrix(address member, bool working, uint8 level) private {
         if (!working) return _enterNonWorking(member, level);
         address host = participants[member].sponsor;
         for (uint8 depth; depth < MAX_WORKING_LEVEL && host != address(0); ++depth) {
-            if (workingLevel[host] + 1 == level) {
+            uint8 completed = workingLevel[host];
+            // A legacy host can fund this level before the old completion threshold is reached.
+            if (completed + 2 == level && _workingUpgradeFunded(host, completed + 1)) {
+                _completeLevel(host, true, ++completed);
+            }
+            if (completed + 1 >= level) {
                 emit LevelEntered(member, host, working, level);
-                uint8 filled = ++matrixFilled[host][level];
-                if (level > 1 && (filled >= 3 || level == MAX_WORKING_LEVEL)) {
+                if (completed >= level) {
+                    ++workingExtraPositions[host][level];
                     _queueTableDistribution(host, _workingIdAmount(level) * tokenUnit, true, level);
+                } else {
+                    uint8 filled = ++matrixFilled[host][level];
+                    if (filled > WORKING_UPGRADE_POSITIONS || level == MAX_WORKING_LEVEL) {
+                        _queueTableDistribution(host, _workingIdAmount(level) * tokenUnit, true, level);
+                    }
+                    uint8 threshold = level == MAX_WORKING_LEVEL ? MAX_WORKING_LEVEL * 2 : WORKING_UPGRADE_POSITIONS;
+                    if (filled >= threshold) _completeLevel(host, true, level);
                 }
-                if (filled == _workingTeam(level)) _completeLevel(host, true, level);
                 return;
             }
             host = participants[host].sponsor;
@@ -515,13 +546,14 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
         nonWorkingQueueBounds[level] = (bounds >> 64 << 64) | tail;
     }
 
-    /// @dev Completing a level: its turnover (2 × L × ID) minus the auto-upgrade is split 80% / 10% U1 /
-    /// 10% U2–U9, and the auto-upgrade (next level's ID) enters the member into the next level.
-    /// Working Level 1 is paid through the directs themselves, so it queues nothing.
+    /// @dev Completion advances the member once. Working distributions are queued per paying position;
+    /// Non-Working distributions are queued from the full matrix's turnover less the upgrade.
     function _completeLevel(address account, bool working, uint8 level) private {
         if (working) {
             workingLevel[account] = level;
-            if (level > 1) _queueWorkingLevel(account, level);
+            if (level > 1 && level < MAX_WORKING_LEVEL) {
+                workingAutoUpgradeConsumed += _workingIdAmount(level + 1) * tokenUnit;
+            }
         } else {
             nonWorkingLevel[account] = level;
             _queueNonWorkingLevel(account, level);
@@ -588,18 +620,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
             if (upline != address(0)) upline = participants[upline].sponsor;
         }
         workingReserve += workingAllocation - allocated;
-    }
-
-    function _queueWorkingLevel(address account, uint8 level) private {
-        uint256 idAmount = _workingIdAmount(level) * tokenUnit;
-        uint256 turnover = _workingTeam(level) * idAmount;
-        uint256 upgrade = level < MAX_WORKING_LEVEL ? _workingIdAmount(level + 1) * tokenUnit : 0;
-        workingAutoUpgradeConsumed += upgrade;
-        // Working Levels 2–14 distribute every position from 3 onward as it fills; Level 15
-        // distributes every position because there is no further auto-upgrade.
-        if (level > 1) return;
-        uint256 distributable = turnover - upgrade;
-        _queueTableDistribution(account, distributable, true, level);
     }
 
     function _queueNonWorkingLevel(address account, uint8 level) private {
@@ -766,12 +786,6 @@ contract OpenProtocolParticipation is Initializable, OwnableUpgradeable, UUPSUpg
     function _workingIdAmount(uint8 level) private pure returns (uint256) {
         if (level <= 2) return 15;
         return 15 * (2 ** (level - 2));
-    }
-
-    /// @dev Every Working level uses the published 2×L matrix size. At Level 2, positions 1–2
-    /// fund the 30 USDT Level 3 upgrade and positions 3–4 fund the 30 USDT distribution.
-    function _workingTeam(uint8 level) private pure returns (uint256) {
-        return level * 2;
     }
 
     function _nonWorkingIdAmount(uint8 level) private pure returns (uint256) {
